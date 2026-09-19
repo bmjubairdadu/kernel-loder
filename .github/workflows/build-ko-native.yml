@@ -26,16 +26,20 @@ jobs:
         run: |
           cd $HOME/kernel
           export ARCH=arm64
-          export CROSS_COMPILE=$HOME/toolchain/bin/aarch64-linux-android-
+          export PATH=$HOME/toolchain/bin:$PATH
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
           make daisy_defconfig
           make -j$(nproc) modules_prepare
 
       - name: Build driver
         run: |
           export ARCH=arm64
-          export CROSS_COMPILE=$HOME/toolchain/bin/aarch64-linux-android-
+          export PATH=$HOME/toolchain/bin:$PATH
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
           make -C $HOME/kernel M=$GITHUB_WORKSPACE/driver ARCH=arm64 \
-               CROSS_COMPILE=$HOME/toolchain/bin/aarch64-linux-android- modules
+               CROSS_COMPILE=aarch64-linux-android- modules
           mkdir -p $GITHUB_WORKSPACE/driver/out
           KREL=$(cat $HOME/kernel/include/config/kernel.release)
           cp $GITHUB_WORKSPACE/driver/kloader_driver.ko \
