@@ -1,0 +1,40 @@
+# ===== Gradle / Android build outputs =====
+.gradle/
+build/
+/app/build/
+/app/release/
+/captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+local.properties
+/app/src/main/assets/*.apk
+/app/src/main/assets/*.zip
+
+# ===== Logs / temporary tooling output =====
+*.log
+/build_out.log
+/build_output.log
+/driver/b307.log
+/driver/wsl_state.txt
+/driver/wsl_err.txt
+/driver/wsl_out.txt
+_*.txt
+verify_apk.txt
+
+# ===== IDE =====
+/.idea/
+*.iml
+*.hprof
+.DS_Store
+Thumbs.db
+
+# ===== AI/agent scratch =====
+/.agent/
+/.artifacts/
+/dist/
+docs/screenshots/*.png
+
+# ===== keep these (prebuilt modules are shipped on purpose) =====
+!/app/src/main/assets/drivers/*.ko
+!/driver/out/*.ko

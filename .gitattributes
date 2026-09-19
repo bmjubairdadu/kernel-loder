@@ -1,0 +1,35 @@
+# Normalize all text files to LF in the repository (keeps WSL/shell scripts working)
+* text=auto eol=lf
+
+# Windows-only launchers keep CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binaries (never touch these)
+*.ko    binary
+*.apk   binary
+*.zip   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.jar   binary
+*.aab   binary
+
+# Source / docs languages
+*.kt    text
+*.kts   text
+*.java  text
+*.xml   text
+*.c     text
+*.h     text
+*.sh    text
+*.md    text
+
+# Generated files: keep out of diffs/linguist
+*.ko            linguist-vendored=false
+app/src/main/assets/drivers/*.ko  linguist-generated=true
+
+# Release artefacts shown by GitHub
+app/build/outputs/apk/debug/app-debug.apk  linguist-generated=true

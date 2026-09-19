@@ -1,0 +1,466 @@
+package com.kernelloader.driver
+
+import android.content.Context
+import android.net.Uri
+import com.kernelloader.root.RootChecker
+import com.topjohnwu.superuser.Shell
+import java.io.File
+import java.io.FileOutputStream
+import java.util.Base64
+
+/**
+ * UNIVERSAL KERNEL LOADER ENGINE
+ * ==============================
+ * Target: load the driver .ko on ANY kernel (old or new), and when the kernel
+ * gives problems, FIX them automatically (we run as root / superuser) and load.
+ *
+ * Auto-fix capabilities:
+ *  1. SELinux Enforcing             -> setenforce 0
+ *  2. Permission denied on insmod   -> chmod/chcon + SELinux + retry
+ *  3. vermagic mismatch (Exec format error / Invalid module format)
+ *                                   -> binary-patch the .ko vermagic string to
+ *                                      the RUNNING kernel release -> retry
+ *  4. symbol/version CRC mismatch   -> busybox insmod -f (force)
+ *  5. module signature enforcement  -> try sig_enforce off -> force load
+ *  6. already loaded ("File exists")-> treat as success + verify
+ *
+ * If no file was picked, it scans the embedded drivers and auto-selects the
+ * best match for the running kernel.
+ *
+ * Every single step is streamed to the terminal (vm.tlog) so the user can see
+ * exactly what the loader is doing.
+ */
+object UniversalKernelLoader {
+
+    private const val TMP_KO = "/data/local/tmp/kloader_auto.ko"
+
+    fun autoLoad(context: Context, vm: DriverViewModel) {
+        vm.tstep("Checking superuser...")
+        vm.tlog("==============================================", "INFO")
+        vm.tlog(" KERNEL LODER - UNIVERSAL AUTO-LOAD", "INFO")
+        vm.tlog(" any device - any model - old & new kernels", "INFO")
+        vm.tlog("==============================================", "INFO")
+
+        // ---------- 0. Root check ----------
+        val rootOk = try {
+            Shell.getShell().isRoot
+        } catch (e: Exception) {
+            false
+        }
+        if (!rootOk) {
+            vm.tlog("ROOT: MISSING - grant Superuser/Su permission to the app!", "ERR")
+            finish(vm, false, "Root missing - superuser grant korun")
+            return
+        }
+        vm.tlog("ROOT: OK (running as uid=0)", "OK")
+
+        // ---------- 1. Gather device info ----------
+        vm.tstep("Reading device info...")
+        val brand = Shell.cmd("getprop ro.product.brand").exec().out.firstOrNull()?.trim() ?: ""
+        val model = Shell.cmd("getprop ro.product.model").exec().out.firstOrNull()?.trim() ?: ""
+        val kernel = Shell.cmd("uname -r").exec().out.firstOrNull()?.trim() ?: "unknown"
+        val arch = Shell.cmd("uname -m").exec().out.firstOrNull()?.trim() ?: "unknown"
+        val selinux = Shell.cmd("getenforce").exec().out.firstOrNull()?.trim() ?: "unknown"
+        if (brand.isNotEmpty() || model.isNotEmpty()) {
+            vm.tlog("DEVICE: $brand $model (device name doesn't matter - universal loader)", "INFO")
+        }
+        vm.tlog("KERNEL: $kernel", "INFO")
+        vm.tlog("ARCH:   $arch", "INFO")
+        vm.tlog("SELINUX: $selinux", "INFO")
+
+        // ---------- 2. FIX: SELinux ----------
+        if (selinux.equals("Enforcing", ignoreCase = true)) {
+            vm.tstep("Fix: SELinux Enforcing -> Permissive")
+            vm.tlog("FIX: SELinux is Enforcing -> setenforce 0", "FIX")
+            val r = Shell.cmd("setenforce 0").exec()
+            if (r.isSuccess) {
+                vm.tlog("FIX: SELinux -> Permissive OK", "OK")
+            } else {
+                vm.tlog("FIX: setenforce 0 failed (${r.err.joinToString(" ")}). Continuing anyway...", "WARN")
+            }
+        }
+
+        // ---------- 3. Get the .ko file ----------
+        vm.tstep("Preparing driver .ko file...")
+        val cacheFile = File(context.cacheDir, "kloader_auto.ko")
+        val sourceName: String
+        val pickedUri = vm.pickedFileUri.value
+        if (pickedUri != null) {
+            sourceName = vm.pickedFileName.value ?: "picked.ko"
+            vm.tlog("SOURCE: user-picked file: $sourceName", "INFO")
+            try {
+                context.contentResolver.openInputStream(pickedUri)?.use { input ->
+                    FileOutputStream(cacheFile).use { output -> input.copyTo(output) }
+                } ?: run {
+                    vm.tlog("ERROR: could not open picked file", "ERR")
+                    finish(vm, false, "File open failed")
+                    return
+                }
+            } catch (e: Exception) {
+                vm.tlog("ERROR: reading picked file: ${e.message}", "ERR")
+                finish(vm, false, "File read failed")
+                return
+            }
+        } else {
+            val best = findBestEmbeddedDriver(context, kernel)
+            if (best == null) {
+                vm.tlog("ERROR: no file picked AND no embedded driver found", "ERR")
+                finish(vm, false, "Kono .ko paoya jay nai - file pick korun")
+                return
+            }
+            sourceName = best.displayName
+            vm.tlog("SOURCE: auto-selected embedded driver: $sourceName (${best.filename})", "INFO")
+            try {
+                context.resources.assets.open(best.filename).use { input ->
+                    FileOutputStream(cacheFile).use { output -> input.copyTo(output) }
+                }
+            } catch (e: Exception) {
+                vm.tlog("ERROR: extracting embedded driver: ${e.message}", "ERR")
+                finish(vm, false, "Driver extract failed")
+                return
+            }
+        }
+
+        // ---------- 4. Normalize to raw ELF (some bundled .ko are base64) ----------
+        vm.tstep("Validating ELF kernel module...")
+        if (!ensureElf(cacheFile)) {
+            vm.tlog("ERROR: file is NOT an ELF kernel module (.ko) - insmod impossible", "ERR")
+            vm.tlog("HINT: .apk/.zip file insmod kora jay na - valid .ko pick korun", "WARN")
+            finish(vm, false, "Not a valid .ko (ELF)")
+            return
+        }
+        vm.tlog("ELF: valid kernel module detected", "OK")
+
+        // ---------- 5. Read vermagic & compare with running kernel ----------
+        val vermagic = readVermagic(cacheFile)
+        vm.tlog("KOVERMAGIC: ${vermagic ?: "not found"}", "INFO")
+        var needPatch = false
+        if (vermagic == null) {
+            vm.tlog("WARN: vermagic not found in .ko - will try load anyway", "WARN")
+        } else {
+            val vmVersion = vermagic.substringBefore(' ')
+            val vmArch = vermagic.substringAfterLast(' ', "")
+            if (vmVersion != kernel) {
+                needPatch = true
+                vm.tlog("DIAGNOSE: vermagic MISMATCH! (.ko=$vmVersion vs running=$kernel)", "WARN")
+                vm.tlog("PLAN: auto-patch .ko vermagic -> $kernel", "FIX")
+            }
+            if (vmArch.isNotEmpty() && arch == "aarch64" && !vmArch.contains("aarch64", true)) {
+                vm.tlog("DIAGNOSE: ARCH mismatch! (.ko=$vmArch vs running=$arch) - load will likely fail", "WARN")
+            }
+        }
+
+        // ---------- 6. Copy to /data/local/tmp ----------
+        vm.tstep("Copying .ko to /data/local/tmp...")
+        val copy = Shell.cmd(
+            "cp \"${cacheFile.absolutePath}\" $TMP_KO",
+            "chmod 644 $TMP_KO",
+            "chown root:root $TMP_KO 2>/dev/null"
+        ).exec()
+        if (!copy.isSuccess) {
+            vm.tlog("ERROR: copy to /data/local/tmp failed: ${copy.err.joinToString(" ")}", "ERR")
+            finish(vm, false, "Copy failed")
+            return
+        }
+        vm.tlog("COPY: $TMP_KO OK", "OK")
+
+        // If vermagic mismatch, patch BEFORE first attempt (old kernels always reject mismatched vermagic)
+        if (needPatch) {
+            vm.tstep("Fix: patching vermagic -> $kernel")
+            if (patchVermagic(cacheFile, kernel)) {
+                vm.tlog("FIX: vermagic patched OK -> \"$kernel\"", "OK")
+                Shell.cmd("cp \"${cacheFile.absolutePath}\" $TMP_KO", "chmod 644 $TMP_KO").exec()
+            } else {
+                vm.tlog("FIX: in-place vermagic patch not possible (string too long) - will rely on force-load", "WARN")
+            }
+        }
+
+        // ---------- 7. insmod with auto-fix retry ladder ----------
+        vm.tstep("Loading module (insmod)...")
+        vm.tlog("CMD: insmod $TMP_KO", "CMD")
+        var res = Shell.cmd("insmod $TMP_KO").exec()
+        res.out.forEach { if (it.isNotBlank()) vm.tlog(it, "OUT") }
+        res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
+
+        if (!res.isSuccess) {
+            val err = (res.out + res.err).joinToString("\n")
+            res = runFixLadder(vm, cacheFile, err)
+        }
+
+        // ---------- 8. Verify ----------
+        val ok = verifyLoad(vm, sourceName)
+        if (ok) {
+            vm.tlog("==============================================", "OK")
+            vm.tlog(" RESULT: DRIVER LOADED & VERIFIED", "OK")
+            vm.tlog("==============================================", "OK")
+            finish(vm, true, "Loaded OK: $sourceName")
+        } else {
+            vm.tlog("==============================================", "ERR")
+            vm.tlog(" RESULT: LOAD FAILED - terminal log e detail ache", "ERR")
+            vm.tlog(" HINT: terminal e \"dmesg | tail -n 30\" likhe exact kernel error dekhun", "WARN")
+            vm.tlog("==============================================", "ERR")
+            finish(vm, false, "Load failed - terminal e detail ache")
+        }
+    }
+
+    /**
+     * Auto-fix ladder: analyze kernel error text and apply the matching fix,
+     * retrying insmod after each fix. Returns the last shell result.
+     */
+    private fun runFixLadder(vm: DriverViewModel, cacheFile: File, originalError: String): Shell.Result {
+        var res = Shell.cmd("true").exec()
+        var lastErr = originalError
+        var attempts = 0
+
+        // --- FIX A: "File exists" -> module already loaded
+        if (lastErr.contains("File exists", true) || lastErr.contains("already loaded", true)) {
+            vm.tlog("DIAGNOSE: module already loaded - treating as success", "OK")
+            return Shell.cmd("true").exec()
+        }
+
+        // --- FIX B: Permission denied -> SELinux / chmod
+        if (lastErr.contains("Permission denied", true) || lastErr.contains("Operation not permitted", true)) {
+            vm.tstep("Fix: permission problem...")
+            vm.tlog("FIX: Permission denied -> chmod + chcon + setenforce 0 + retry", "FIX")
+            val fix = Shell.cmd(
+                "chmod 644 $TMP_KO",
+                "chcon u:object_r:system_file:s0 $TMP_KO 2>/dev/null",
+                "setenforce 0 2>/dev/null"
+            ).exec()
+            vm.tlog("FIX: applied (exit ${fix.code})", if (fix.isSuccess) "OK" else "WARN")
+            res = Shell.cmd("insmod $TMP_KO").exec()
+            vm.tlog("RETRY: insmod (after permission fix) -> exit ${res.code}", "CMD")
+            res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
+            if (res.isSuccess) return res
+            lastErr = (res.out + res.err).joinToString("\n")
+            attempts++
+        }
+
+        // --- FIX C: vermagic / Exec format error -> binary patch + retry
+        if (lastErr.contains("Invalid module format", true) ||
+            lastErr.contains("Exec format error", true) ||
+            lastErr.contains("version magic", true) ||
+            lastErr.contains("vermagic", true)
+        ) {
+            vm.tstep("Fix: vermagic mismatch -> patching .ko...")
+            val kernel = Shell.cmd("uname -r").exec().out.firstOrNull()?.trim() ?: ""
+            vm.tlog("FIX: vermagic/format error -> patching vermagic to \"$kernel\"", "FIX")
+            if (kernel.isNotEmpty() && patchVermagic(cacheFile, kernel)) {
+                vm.tlog("FIX: vermagic patched -> \"$kernel\"", "OK")
+                Shell.cmd("cp \"${cacheFile.absolutePath}\" $TMP_KO", "chmod 644 $TMP_KO").exec()
+                res = Shell.cmd("insmod $TMP_KO").exec()
+                vm.tlog("RETRY: insmod (after vermagic patch) -> exit ${res.code}", "CMD")
+                res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
+                if (res.isSuccess) return res
+                lastErr = (res.out + res.err).joinToString("\n")
+            } else {
+                vm.tlog("FIX: patch failed - trying force-load instead", "WARN")
+            }
+            attempts++
+        }
+
+        // --- FIX D: symbol / CRC / signature issues -> force load via busybox
+        if (lastErr.contains("Unknown symbol", true) ||
+            lastErr.contains("disagrees about version", true) ||
+            lastErr.contains("module_layout", true) ||
+            lastErr.contains("Invalid module format", true) ||
+            lastErr.contains("Exec format error", true) ||
+            lastErr.contains("Required key not available", true) ||
+            lastErr.contains("Operation not permitted", true) ||
+            attempts > 0
+        ) {
+            vm.tstep("Fix: force-load (busybox insmod -f)...")
+            vm.tlog("FIX: force-load via busybox insmod -f (bypasses vermagic/CRC/sign checks)", "FIX")
+            res = Shell.cmd(
+                "BB=\$(command -v busybox); [ -z \"\$BB\" ] && BB=/data/adb/magisk/busybox; " +
+                        "[ -x \"\$BB\" ] && \$BB insmod -f $TMP_KO || insmod -f $TMP_KO"
+            ).exec()
+            vm.tlog("RETRY: insmod -f (force) -> exit ${res.code}", "CMD")
+            res.out.forEach { if (it.isNotBlank()) vm.tlog(it, "OUT") }
+            res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
+            if (res.isSuccess) return res
+            lastErr = (res.out + res.err).joinToString("\n")
+        }
+
+        // --- FIX E: signature enforcement -> disable sig_enforce, force again
+        if (lastErr.contains("Required key not available", true) || lastErr.contains("Key was rejected", true)) {
+            vm.tstep("Fix: module signature enforcement...")
+            vm.tlog("FIX: kernel rejected module signature -> sig_enforce off", "FIX")
+            Shell.cmd("echo 0 > /sys/module/module/parameters/sig_enforce 2>/dev/null").exec()
+            res = Shell.cmd("insmod $TMP_KO").exec()
+            vm.tlog("RETRY: insmod (after sig_enforce off) -> exit ${res.code}", "CMD")
+            if (res.isSuccess) return res
+        }
+
+        return res
+    }
+
+    /** Post-load verification: lsmod + any /dev node from the module + dmesg */
+    private fun verifyLoad(vm: DriverViewModel, sourceName: String): Boolean {
+        vm.tstep("Verifying module...")
+        val lsmod = Shell.cmd("lsmod").exec()
+        // Find the module in lsmod by tokens of the source file name (a module's
+        // internal name can differ from the file name) - any driver / any device.
+        val sourceTokens = sourceName.removeSuffix(".ko").split('_', '-', '.')
+            .filter { it.length >= 3 && it.any { c -> !c.isDigit() } }
+        val loadedLine = lsmod.out.drop(1).firstOrNull { line ->
+            val n = line.trim().split(Regex("\\s+")).firstOrNull() ?: ""
+            sourceTokens.any { n.contains(it, true) }
+        }
+        val moduleLoaded = loadedLine != null
+        val loadedName = loadedLine?.trim()?.split(Regex("\\s+"))?.firstOrNull() ?: ""
+        // The module itself chooses its /dev node name - match it, then fall back
+        // to the tags our bundled drivers use.
+        val devList = Shell.cmd("ls /dev 2>/dev/null").exec().out
+        val devMatches = devList.filter { node ->
+            (loadedName.isNotEmpty() && node.contains(loadedName, true)) ||
+                    node.contains("kloader", true) || node.contains("daisy", true)
+        }
+        val devExists = devMatches.isNotEmpty()
+        val dmesg = Shell.cmd("dmesg | tail -n 15").exec()
+
+        vm.tlog(
+            "VERIFY: lsmod -> ${if (moduleLoaded) "LOADED (${loadedLine!!.trim().split(Regex("\\s+")).first()})" else "module not visible in lsmod"}",
+            if (moduleLoaded) "OK" else "WARN"
+        )
+        vm.tlog(
+            "VERIFY: /dev node -> ${if (devExists) "FOUND (${devMatches.joinToString(", ")})" else "NOT FOUND"}",
+            if (devExists) "OK" else "WARN"
+        )
+        dmesg.out.takeLast(6).forEach { if (it.isNotBlank()) vm.tlog("dmesg: $it", "INFO") }
+
+        vm.setVerification(
+            VerificationResult(
+                lsmod = lsmod.out,
+                deviceNodeFound = devExists,
+                dmesgLogs = dmesg.out,
+                timestamp = vm.nowString()
+            )
+        )
+        return moduleLoaded || devExists
+    }
+
+    private fun finish(vm: DriverViewModel, ok: Boolean, msg: String) {
+        vm.autoLoadOk.value = ok
+        vm.autoLoadStatus.value = msg
+        vm.tstep("")
+    }
+
+    // ================= binary helpers =================
+
+    /** Make sure the file is a raw ELF .ko; if it is base64-encoded, decode it in place. */
+    fun ensureElf(file: File): Boolean {
+        val bytes = file.readBytes()
+        if (isElf(bytes)) return true
+        return try {
+            val decoded = Base64.getMimeDecoder().decode(bytes)
+            if (isElf(decoded)) {
+                file.writeBytes(decoded)
+                true
+            } else false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun isElf(b: ByteArray): Boolean =
+            b.size > 4 && b[0] == 0x7F.toByte() && b[1] == 'E'.code.toByte() &&
+            b[2] == 'L'.code.toByte() && b[3] == 'F'.code.toByte()
+
+    /** Read the "vermagic=..." string from the raw .ko bytes, or null. */
+    fun readVermagic(file: File): String? {
+        val bytes = file.readBytes()
+        val tag = "vermagic=".toByteArray(Charsets.US_ASCII)
+        val idx = indexOf(bytes, tag) ?: return null
+        var end = idx + tag.size
+        while (end < bytes.size && bytes[end] != 0.toByte()) end++
+        return String(bytes, idx + tag.size, end - (idx + tag.size), Charsets.US_ASCII)
+    }
+
+    /**
+     * Binary-patch the vermagic string of a .ko so the kernel accepts it.
+     * New string = "<running kernel release> <original flags>" (null-padded).
+     * If that is longer than the original string, fall back to release only.
+     * Returns true on success.
+     */
+    fun patchVermagic(file: File, kernelRelease: String): Boolean {
+        return try {
+            val bytes = file.readBytes()
+            val tag = "vermagic=".toByteArray(Charsets.US_ASCII)
+            val idx = indexOf(bytes, tag) ?: return false
+            var end = idx + tag.size
+            while (end < bytes.size && bytes[end] != 0.toByte()) end++
+            val oldStr = String(bytes, idx + tag.size, end - (idx + tag.size), Charsets.US_ASCII)
+            if (oldStr.isEmpty()) return false
+            val flags = oldStr.substringAfter(' ', "")
+            val candidates = listOf(
+                    "$kernelRelease $flags".trim(),
+                    kernelRelease
+            )
+            val newStr = candidates.firstOrNull { it.length <= oldStr.length } ?: return false
+            var p = idx + tag.size
+            for (ch in newStr) bytes[p++] = ch.code.toByte()
+            while (p < end) bytes[p++] = 0
+            file.writeBytes(bytes)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun indexOf(haystack: ByteArray, needle: ByteArray): Int? {
+        if (needle.isEmpty() || haystack.size < needle.size) return null
+        outer@ for (i in 0..(haystack.size - needle.size)) {
+            for (j in needle.indices) {
+                if (haystack[i + j] != needle[j]) continue@outer
+            }
+            return i
+        }
+        return null
+    }
+
+    // ================= embedded driver auto-selection =================
+
+    /**
+     * Pick the embedded driver that best matches the running kernel:
+     * exact version match > kernel-starts-with-version > same major.minor > none.
+     * Native build (real kernel build) wins, then QX over RT on ties.
+     */
+    fun findBestEmbeddedDriver(context: Context, kernelRelease: String): DriverInfo? {
+        val all = EmbeddedDrivers.getAvailableDrivers(context)
+        if (all.isEmpty()) return null
+        val kMajor = kernelRelease.substringBefore('.').toIntOrNull()
+        val kMinor = kernelRelease.substringAfter('.', "").substringBefore('.').toIntOrNull()
+
+        fun score(d: DriverInfo): Int {
+            var s = 0
+            // The asset file name is only a label: read the REAL kernel release from
+            // the binary vermagic, so any naming / any kernel works.
+            val realRelease = EmbeddedDrivers.readVermagic(context, d.filename)
+            if (realRelease.isNotEmpty() &&
+                RootChecker.kernelShortVersion(realRelease) == RootChecker.kernelShortVersion(kernelRelease)
+            ) s = 1200
+            else if (d.version == kernelRelease) s = 1000
+            else if (kernelRelease.startsWith(d.version)) s = 900
+            else if (d.version.startsWith(kernelRelease)) s = 800
+            else {
+                val dMajor = d.version.substringBefore('.').toIntOrNull()
+                val dMinor = d.version.substringAfter('.', "").substringBefore('.').toIntOrNull()
+                if (dMajor != null && kMajor != null && dMajor == kMajor &&
+                    dMinor != null && kMinor != null && dMinor == kMinor
+                ) s = 500
+            }
+            if (s > 0) {
+                // Native builds (compiled against a real kernel tree) always win
+                if (d.type == "NATIVE" || d.type == "KERNEL" || d.type == "DAISY") {
+                    s += if (kernelRelease.startsWith(d.version) || d.version.startsWith(kernelRelease)) 200 else 5
+                }
+                if (d.type == "QX") s += 5   // tie-break: QX over RT
+            }
+            return s
+        }
+
+        return all.map { it to score(it) }.filter { it.second > 0 }
+                .maxByOrNull { it.second }?.first
+    }
+}
