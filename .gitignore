@@ -11,6 +11,9 @@ local.properties
 /app/src/main/assets/*.apk
 /app/src/main/assets/*.zip
 
+# ===== APK at repo root is the official release file - DO push it =====
+!/Kernel-Loder-*.apk
+
 # ===== Logs / temporary tooling output =====
 *.log
 /build_out.log
