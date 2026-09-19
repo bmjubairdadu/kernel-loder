@@ -22,14 +22,18 @@ jobs:
       - name: Clone kernel source (4.9 tree)
         run: git clone --depth=1 https://github.com/Xtended-Devices/kernel_xiaomi_daisy $HOME/kernel
 
-      - name: Clone GCC 4.9 aarch64 toolchain
-        run: git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 $HOME/toolchain
+      - name: Clone GCC 4.9 toolchains (64-bit + 32-bit)
+        run: |
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 $HOME/toolchain
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 $HOME/toolchain32
+          ls $HOME/toolchain/bin | head -5
+          ls $HOME/toolchain32/bin | head -5
 
       - name: Prepare kernel
         run: |
           cd $HOME/kernel
           export ARCH=arm64
-          export PATH=$HOME/toolchain/bin:$PATH
+          export PATH=$HOME/toolchain/bin:$HOME/toolchain32/bin:$PATH
           export CROSS_COMPILE=aarch64-linux-android-
           export CROSS_COMPILE_ARM32=arm-linux-androideabi-
           make daisy_defconfig
@@ -38,7 +42,7 @@ jobs:
       - name: Build driver
         run: |
           export ARCH=arm64
-          export PATH=$HOME/toolchain/bin:$PATH
+          export PATH=$HOME/toolchain/bin:$HOME/toolchain32/bin:$PATH
           export CROSS_COMPILE=aarch64-linux-android-
           export CROSS_COMPILE_ARM32=arm-linux-androideabi-
           make -C $HOME/kernel M=$GITHUB_WORKSPACE/driver ARCH=arm64 \
