@@ -20,10 +20,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK components
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          cmdline-tools-version: 11076708
+          cmdline-tools-version: 13114758
           packages: platform-tools "platforms;android-34" "build-tools;34.0.0"
 
       - name: Make gradlew executable

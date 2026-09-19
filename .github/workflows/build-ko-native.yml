@@ -3,9 +3,12 @@ name: Build native .ko (kernel module)
 on:
   workflow_dispatch:
   push:
+    tags:
+      - 'v*'
     paths:
       - 'driver/kloader_driver.c'
       - 'driver/Makefile'
+      - '.github/workflows/build-ko-native.yml'
 
 jobs:
   build:
