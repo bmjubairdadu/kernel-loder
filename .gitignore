@@ -21,6 +21,10 @@ local.properties
 /driver/wsl_out.txt
 _*.txt
 verify_apk.txt
+git_step.txt
+repo_check.txt
+repo_create.txt
+commit_log.txt
 
 # ===== IDE =====
 /.idea/
