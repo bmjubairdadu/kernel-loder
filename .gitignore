@@ -58,5 +58,10 @@ docs/screenshots/*.png
 /driver/fastcheck.txt
 /driver/relaunch_result.txt
 /driver/ko_check.txt
+/driver/coverage_status.txt
+/driver/ko_paths.txt
+/driver/modinfo.txt
+/driver/wsl_probe.txt
+/driver/wsl_live.txt
 /driver/logs/
 /build_log.txt
