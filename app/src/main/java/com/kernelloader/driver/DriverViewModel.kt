@@ -84,6 +84,7 @@ object EmbeddedDrivers {
             val version = if (idx == -1) base else base.substring(idx + 1)
             val description = when (type) {
                 "NATIVE", "DAISY" -> "Native build for kernel $version (universal)"
+                "UNI" -> "Universal build for kernel $version (loads on any device with the same X.Y.Z)"
                 "QX" -> "Legacy QX build for $version"
                 "RT" -> "Legacy RT build for $version"
                 else -> "Kernel module build for $version"

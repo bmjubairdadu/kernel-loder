@@ -110,6 +110,17 @@ object UniversalKernelLoader {
             }
             sourceName = best.displayName
             vm.tlog("SOURCE: auto-selected embedded driver: $sourceName (${best.filename})", "INFO")
+            // Coverage report: exact X.Y.Z module vs nearest-series fallback
+            val realVerm = EmbeddedDrivers.readVermagic(context, best.filename)
+            val exactCover = realVerm.isNotEmpty() &&
+                    RootChecker.kernelShortVersion(realVerm) == RootChecker.kernelShortVersion(kernel)
+            vm.tlog(
+                if (exactCover)
+                    "COVERAGE: $kernel -> EXACT bundled module (${KernelCoverage.all.size} kernel versions supported)"
+                else
+                    "COVERAGE: $kernel -> nearest-series module + vermagic patch + force-load (${KernelCoverage.all.size} kernel versions supported)",
+                if (exactCover) "OK" else "INFO"
+            )
             try {
                 context.resources.assets.open(best.filename).use { input ->
                     FileOutputStream(cacheFile).use { output -> input.copyTo(output) }
@@ -125,7 +136,7 @@ object UniversalKernelLoader {
         vm.tstep("Validating ELF kernel module...")
         if (!ensureElf(cacheFile)) {
             vm.tlog("ERROR: file is NOT an ELF kernel module (.ko) - insmod impossible", "ERR")
-            vm.tlog("HINT: .apk/.zip file insmod kora jay na - valid .ko pick korun", "WARN")
+            vm.tlog("HINT: valid .ko / RT-QX installer .sh pick korun (.sh theke .ko auto extract hoy)", "WARN")
             finish(vm, false, "Not a valid .ko (ELF)")
             return
         }
@@ -357,9 +368,35 @@ object UniversalKernelLoader {
             if (isElf(decoded)) {
                 file.writeBytes(decoded)
                 true
-            } else false
+            } else extractEmbeddedKo(bytes)?.let { file.writeBytes(it); true } ?: false
         } catch (e: Exception) {
-            false
+            extractEmbeddedKo(bytes)?.let { file.writeBytes(it); true } ?: false
+        }
+    }
+
+    /**
+     * RT / QX installer scripts (.sh) carry the .ko as a base64 blob, e.g.
+     *   MODULE_BASE64="f0VMRgIB...\r\n..."  followed by insmod
+     * Extract the longest base64 run that decodes to a valid ELF .ko.
+     * This makes ANY RT/QX .sh script loadable via the file picker - no
+     * per-kernel script list needed.
+     */
+    private fun extractEmbeddedKo(bytes: ByteArray): ByteArray? {
+        return try {
+            val text = String(bytes, Charsets.ISO_8859_1)
+            var best: ByteArray? = null
+            // A real .ko blob is always several KB of base64 chars / whitespace.
+            for (m in Regex("""[A-Za-z0-9+/=\s]{4096,}""").findAll(text)) {
+                val b64 = m.value.replace(Regex("""\s"""), "")
+                val cut = b64.substring(0, b64.length / 4 * 4)   // multiple of 4
+                try {
+                    val decoded = Base64.getDecoder().decode(cut)
+                    if (isElf(decoded) && (best == null || decoded.size > best!!.size)) best = decoded
+                } catch (_: Exception) { /* keep scanning */ }
+            }
+            best
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -429,32 +466,57 @@ object UniversalKernelLoader {
     fun findBestEmbeddedDriver(context: Context, kernelRelease: String): DriverInfo? {
         val all = EmbeddedDrivers.getAvailableDrivers(context)
         if (all.isEmpty()) return null
-        val kMajor = kernelRelease.substringBefore('.').toIntOrNull()
-        val kMinor = kernelRelease.substringAfter('.', "").substringBefore('.').toIntOrNull()
+
+        val ver = Regex("""(\d+)\.(\d+)\.(\d+)""")
+        val km = ver.find(kernelRelease)
+        val kMajor = km?.groupValues?.get(1)?.toIntOrNull()
+        val kMinor = km?.groupValues?.get(2)?.toIntOrNull()
+        val kPatch = km?.groupValues?.get(3)?.toIntOrNull()
 
         fun score(d: DriverInfo): Int {
             var s = 0
-            // The asset file name is only a label: read the REAL kernel release from
-            // the binary vermagic, so any naming / any kernel works.
+            // The asset file name is only a label: read the REAL kernel release
+            // from the binary vermagic, so any naming / any kernel works.
             val realRelease = EmbeddedDrivers.readVermagic(context, d.filename)
-            if (realRelease.isNotEmpty() &&
-                RootChecker.kernelShortVersion(realRelease) == RootChecker.kernelShortVersion(kernelRelease)
-            ) s = 1200
-            else if (d.version == kernelRelease) s = 1000
-            else if (kernelRelease.startsWith(d.version)) s = 900
-            else if (d.version.startsWith(kernelRelease)) s = 800
-            else {
-                val dMajor = d.version.substringBefore('.').toIntOrNull()
-                val dMinor = d.version.substringAfter('.', "").substringBefore('.').toIntOrNull()
-                if (dMajor != null && kMajor != null && dMajor == kMajor &&
-                    dMinor != null && kMinor != null && dMinor == kMinor
-                ) s = 500
+            val realShort = if (realRelease.isNotEmpty()) RootChecker.kernelShortVersion(realRelease) else ""
+            val dm = ver.find(if (realShort.isNotEmpty()) realShort else d.version)
+            val dMajor = dm?.groupValues?.get(1)?.toIntOrNull()
+            val dMinor = dm?.groupValues?.get(2)?.toIntOrNull()
+            val dPatch = dm?.groupValues?.get(3)?.toIntOrNull()
+
+            if (realShort.isNotEmpty() &&
+                realShort == RootChecker.kernelShortVersion(kernelRelease)
+            ) {
+                s = 1200    // exact X.Y.Z match - kernel NAME irrelevant, only numbers count
+            } else if (d.version == kernelRelease) {
+                s = 1000
+            } else if (kernelRelease.startsWith(d.version)) {
+                s = 900
+            } else if (d.version.startsWith(kernelRelease)) {
+                s = 800
+            } else if (kMajor != null && dMajor != null) {
+                if (dMajor == kMajor && dMinor != null && dMinor == kMinor) {
+                    // Same series X.Y - closest patch level wins
+                    val patchBonus = if (dPatch != null && kPatch != null)
+                        (255 - kotlin.math.abs(dPatch - kPatch)).coerceAtLeast(0) else 0
+                    s = 600 + patchBonus
+                } else if (dMajor == kMajor) {
+                    // Same major, different minor (e.g. 5.8.18 -> bundled 5.4/5.10)
+                    val minorDist = dMinor?.let { kotlin.math.abs(it - (kMinor ?: it)) } ?: 0
+                    s = 300 + (255 - minorDist * 8).coerceAtLeast(0)
+                } else {
+                    // Different major (old 3.x / very new 6.x-7.x) - still covered:
+                    // pick the NEAREST major series module, then vermagic patch + force-load.
+                    val majorDist = kotlin.math.abs(dMajor - kMajor)
+                    s = (80 - majorDist * 12).coerceAtLeast(8)
+                }
             }
             if (s > 0) {
                 // Native builds (compiled against a real kernel tree) always win
                 if (d.type == "NATIVE" || d.type == "KERNEL" || d.type == "DAISY") {
                     s += if (kernelRelease.startsWith(d.version) || d.version.startsWith(kernelRelease)) 200 else 5
                 }
+                if (d.type == "UNI") s += 10  // our own universal builds beat legacy RT on exact ties
                 if (d.type == "QX") s += 5   // tie-break: QX over RT
             }
             return s

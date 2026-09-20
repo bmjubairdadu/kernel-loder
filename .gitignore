@@ -45,3 +45,13 @@ docs/screenshots/*.png
 # ===== keep these (prebuilt modules are shipped on purpose) =====
 !/app/src/main/assets/drivers/*.ko
 !/driver/out/*.ko
+
+# ===== .ko factory pipeline scratch (logs / generated copies) =====
+/driver/build_all_status.txt
+/driver/check_result.txt
+/driver/launch_result.txt
+/driver/probe_out.txt
+/driver/reset_log.txt
+/driver/build_all_lf.sh
+/driver/versions_lf.txt
+/build_log.txt
