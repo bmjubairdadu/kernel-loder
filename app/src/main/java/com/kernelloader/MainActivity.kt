@@ -233,7 +233,7 @@ fun MainScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Storage, contentDescription = null)
+                        Icon(Icons.Default.Terminal, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(text = stringResource(R.string.driver_selection), style = MaterialTheme.typography.titleMedium)
                     }
