@@ -54,12 +54,55 @@ build_one(){
   [ -f "$OUT/uni_$VER.ko" ] && { log "SKIP-DONE  $VER"; return 0; }
   [ -f "$ASSETS/uni_$VER.ko" ] && { log "SKIP-DONE  $VER"; return 0; }
 
+  # mainline arm64 starts at 3.7, so 3.0..3.6 can never produce an arm64 module.
+  # This check used to sit AFTER the download, so every one of those versions wasted
+  # a full (throttled, ~20 min) tarball fetch before being skipped. Do it first.
+  if [ "$MAJOR" -eq 3 ]; then
+    local MINOR3=${VER#3.}; MINOR3=${MINOR3%%.*}
+    [ "$MINOR3" -lt 7 ] && { log "SKIP-NOARM64 $VER (mainline arm64 starts at 3.7)"; return 2; }
+  fi
+
   local URL="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-$VER.tar.xz"
+  # --- tarball fetch ----------------------------------------------------------
+  # The CDN link is throttled to ~50 KB/s, so one 64 MB tarball takes ~20 min.
+  # The old code had no resume and deleted the partial on failure, so every abort
+  # restarted from zero and was then mislabelled "no source tarball on kernel.org"
+  # (a Windows-side HEAD check proves those URLs answer HTTP 200). Now: validate a
+  # cached tarball, keep + resume partials, verify with xz -t, and report
+  # SKIP-NOSRC only when kernel.org really answers 404/403/410.
+  if [ -f "$TARBALL" ] && ! xz -t "$TARBALL" >/dev/null 2>&1; then
+    log "DISCARD    $VER (cached tarball corrupt/truncated - re-downloading)"
+    rm -f "$TARBALL"
+  fi
   if [ ! -f "$TARBALL" ]; then
-    log "DOWNLOAD   $VER ..."
-    curl -sfL --retry 2 --connect-timeout 20 -o "$TARBALL.part" "$URL" \
-      || { log "SKIP-NOSRC $VER (no source tarball on kernel.org)"; rm -f "$TARBALL.part"; return 2; }
-    mv "$TARBALL.part" "$TARBALL"
+    local try=0 CODE=000 CRES=""
+    while [ "$try" -lt 4 ]; do
+      try=$((try+1))
+      CRES=""
+      [ -s "$TARBALL.part" ] && CRES="--continue-at -"
+      log "DOWNLOAD   $VER (attempt $try) ..."
+      CODE=$(curl -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 \
+                  $CRES --max-time 5400 --speed-limit 1000 --speed-time 120 \
+                  -o "$TARBALL.part" -w '%{http_code}' "$URL" 2>"$LOGDIR/dl-$VER.err")
+      [ -z "$CODE" ] && CODE=000
+      if [ -s "$TARBALL.part" ] && xz -t "$TARBALL.part" >/dev/null 2>&1; then
+        mv -f "$TARBALL.part" "$TARBALL"
+        log "GOT        $VER ($(stat -c%s "$TARBALL") bytes)"
+        break
+      fi
+      case "$CODE" in
+        404|403|410)
+          log "SKIP-NOSRC $VER (kernel.org answers HTTP $CODE - release not on cdn)"
+          rm -f "$TARBALL.part"
+          return 2 ;;
+      esac
+      log "RETRY-DL   $VER (http=$CODE, kept $(stat -c%s "$TARBALL.part" 2>/dev/null || echo 0) bytes, resuming)"
+      sleep 10
+    done
+    if [ ! -f "$TARBALL" ]; then
+      log "FAIL-DL    $VER (incomplete after 4 attempts - partial kept so the next run resumes)"
+      return 1
+    fi
   fi
 
   rm -rf "$TREE"; mkdir -p "$TREE"
@@ -97,9 +140,11 @@ build_one(){
       ./scripts/config -d MODVERSIONS -d MODULE_SIG -d DEBUG_INFO_BTF -e MODULES 2>/dev/null || true
       make ARCH=arm64 olddefconfig                   || exit 1
       echo "--- modules_prepare ---"
-      make ARCH=arm64 -j"$(nproc)" modules_prepare   || exit 1
+      # HOSTCFLAGS -fcommon: host GCC 10+ defaults to -fno-common which breaks
+      # old-kernel host tools (dtc "multiple definition of yylloc" etc.)
+      make ARCH=arm64 -j"$(nproc)" modules_prepare HOSTCFLAGS="-O2 -fcommon" || exit 1
       echo "--- module build ---"
-      make ARCH=arm64 M="$MD" modules                || exit 1
+      make ARCH=arm64 M="$MD" modules HOSTCFLAGS="-O2 -fcommon" || exit 1
       local MAGIC
       MAGIC=$(strings "$MD/kloader_driver.ko" | grep -m1 '^vermagic=')
       echo "VERMAGIC: $MAGIC"
@@ -114,17 +159,7 @@ build_one(){
     grep -q '^BUILD-OK$' "$TLOG"
   }
 
-  # arm64 exists only from kernel 3.7+ - 3.0..3.6 simply cannot build arm64 modules
-  tar -tf "$TARBALL" >/dev/null 2>&1   # sanity: tarball readable
-  if [ "$MAJOR" -eq 3 ]; then
-    local MINOR3=${VER#3.}; MINOR3=${MINOR3%%.*}
-    if [ "$MINOR3" -lt 7 ]; then
-      log "SKIP-NOARM64 $VER (mainline arm64 starts at 3.7)"
-      rm -rf "$TREE"
-      return 2
-    fi
-  fi
-
+  # (arm64 availability for 3.0..3.6 is already handled before the download)
   local built=0
   if [ "$MAJOR" -le 4 ]; then
     [ -x "$GCC49/aarch64-linux-android-gcc" ] && \

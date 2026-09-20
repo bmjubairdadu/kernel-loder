@@ -4,32 +4,32 @@ Kernel NAME does not matter - only X.Y.Z numbers do. Every version below
 is loadable: EXACT module when bundled, otherwise nearest-series module +
 automatic vermagic patch + force-load ladder.
 
-**Bundled modules:** 4.9.337, 4.9.307, 4.9.186, 4.14.117, 4.14.180, 4.14.186, 4.19.81, 4.19.113, 4.19.157, 4.19.191, 5.4.61, 5.4.191, 5.10.198, 5.15.167, 6.1.112, 6.6.57
+**Bundled modules:** 4.9.337, 4.9.307, 4.9.186, 4.14.117, 4.14.180, 4.14.186, 4.19.81, 4.19.113, 4.19.157, 4.19.191, 5.4.61, 5.4.191, 5.10.198, 5.15.167, 6.1.112, 6.6.57, 3.10.108, 3.12.74, 3.7.10, 3.8.13, 3.9.11
 
 ## Linux 3.x
 
 | Kernel version | Bundled module used | Mode |
 |---|---|---|
-| 3.0.101 | 4.9.186 | patch + force-load |
-| 3.1.10 | 4.9.186 | patch + force-load |
-| 3.2.102 | 4.9.186 | patch + force-load |
-| 3.3.8 | 4.9.186 | patch + force-load |
-| 3.4.113 | 4.9.186 | patch + force-load |
-| 3.5.7 | 4.9.186 | patch + force-load |
-| 3.6.11 | 4.9.186 | patch + force-load |
-| 3.7.10 | 4.9.186 | patch + force-load |
-| 3.8.13 | 4.9.186 | patch + force-load |
-| 3.9.11 | 4.9.186 | patch + force-load |
-| 3.10.108 | 4.9.186 | patch + force-load |
-| 3.11.10 | 4.9.186 | patch + force-load |
-| 3.12.74 | 4.14.117 | patch + force-load |
-| 3.13.11 | 4.14.117 | patch + force-load |
-| 3.14.79 | 4.14.117 | patch + force-load |
-| 3.15.10 | 4.14.117 | patch + force-load |
-| 3.16.85 | 4.14.117 | patch + force-load |
-| 3.17.8 | 4.19.81 | patch + force-load |
-| 3.18.140 | 4.19.157 | patch + force-load |
-| 3.19.8 | 4.19.81 | patch + force-load |
+| 3.0.101 | 3.7.10 | patch + force-load |
+| 3.1.10 | 3.7.10 | patch + force-load |
+| 3.2.102 | 3.7.10 | patch + force-load |
+| 3.3.8 | 3.7.10 | patch + force-load |
+| 3.4.113 | 3.7.10 | patch + force-load |
+| 3.5.7 | 3.7.10 | patch + force-load |
+| 3.6.11 | 3.7.10 | patch + force-load |
+| 3.7.10 | 3.7.10 | **EXACT** |
+| 3.8.13 | 3.8.13 | **EXACT** |
+| 3.9.11 | 3.9.11 | **EXACT** |
+| 3.10.108 | 3.10.108 | **EXACT** |
+| 3.11.10 | 3.12.74 | patch + force-load |
+| 3.12.74 | 3.12.74 | **EXACT** |
+| 3.13.11 | 3.12.74 | patch + force-load |
+| 3.14.79 | 3.12.74 | patch + force-load |
+| 3.15.10 | 3.12.74 | patch + force-load |
+| 3.16.85 | 3.12.74 | patch + force-load |
+| 3.17.8 | 3.12.74 | patch + force-load |
+| 3.18.140 | 3.12.74 | patch + force-load |
+| 3.19.8 | 3.12.74 | patch + force-load |
 
 ## Linux 4.x
 

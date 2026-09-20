@@ -47,6 +47,7 @@ docs/screenshots/*.png
 !/driver/out/*.ko
 
 # ===== .ko factory pipeline scratch (logs / generated copies) =====
+/driver/out_all/
 /driver/build_all_status.txt
 /driver/check_result.txt
 /driver/launch_result.txt
@@ -54,4 +55,8 @@ docs/screenshots/*.png
 /driver/reset_log.txt
 /driver/build_all_lf.sh
 /driver/versions_lf.txt
+/driver/fastcheck.txt
+/driver/relaunch_result.txt
+/driver/ko_check.txt
+/driver/logs/
 /build_log.txt
