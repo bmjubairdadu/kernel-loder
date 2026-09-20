@@ -19,17 +19,23 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * UNIVERSAL EMBEDDED DRIVER CATALOG
- * =================================
- * Device name / model / brand does NOT matter. Every .ko dropped into
- * assets/drivers is scanned automatically and the loader reads the REAL
- * kernel release from the binary vermagic at runtime, so a new driver only
- * has to be copied into assets/drivers - nothing else to change.
+ * UNIVERSAL KERNEL LOADER
+ * ========================
+ * This app loads a kernel module (.ko) on ANY rooted device.
  *
- * Naming convention (prefix is only a hint, any prefix works):
- *   native_<x.y.z>.ko -> native build for that exact kernel release
- *   qx_<version>.ko   -> legacy QX build
- *   rt_<version>.ko   -> legacy RT build
+ * How it works:
+ * 1. User presses "Load Kernel" button
+ * 2. App detects running kernel version (uname -r)
+ * 3. Scans assets/drivers/ for a matching .ko file
+ * 4. If match found → loads it via insmod through root shell
+ * 5. If no match → shows message in console to import .ko
+ * 6. Every step is printed in Kernel Loder Console (copyable)
+ *
+ * Currently bundled: native_4.9.337.ko (universal build)
+ * More .ko files can be added to assets/drivers/ - app auto-detects them.
+ *
+ * Naming convention (prefix is only a hint):
+ *   native_<x.y.z>.ko → build for that kernel release (universal)
  */
 object EmbeddedDrivers {
     /**

@@ -4,8 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,9 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.FileOpen
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,7 +27,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -60,7 +55,6 @@ import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.ui.NavDisplay
-import com.kernelloader.driver.EmbeddedDrivers
 import com.kernelloader.driver.DriverViewModel
 import com.kernelloader.root.RootChecker
 import com.kernelloader.ui.MainRoute
@@ -148,15 +142,6 @@ fun MainScreen(
     // Device / model / brand is never checked - only the kernel release matters.
     val compatOk = remember { compatMsg.startsWith("OK") }
 
-    val driverCount = remember { EmbeddedDrivers.getAvailableDrivers(context).size }
-
-    val pickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-        onResult = { uri ->
-            uri?.let { viewModel.onFilePicked(context, it) }
-        }
-    )
-
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -226,7 +211,7 @@ fun MainScreen(
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
-    // Driver Picker
+    // Driver Picker - now just shows kernel info + Load button
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
@@ -235,85 +220,42 @@ fun MainScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Terminal, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = stringResource(R.string.driver_selection), style = MaterialTheme.typography.titleMedium)
+                        Text(text = stringResource(R.string.kernel_loader), style = MaterialTheme.typography.titleMedium)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = stringResource(R.string.embedded_drivers_title) + ": " + driverCount + " " + stringResource(R.string.embedded_available),
+                        text = stringResource(R.string.kernel_version, kernelVersion),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(
-                            onClick = { pickerLauncher.launch(arrayOf("*/*")) },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.FileOpen, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = viewModel.pickedFileName.value ?: stringResource(R.string.pick_ko_file))
-                        }
+                    Text(
+                        text = stringResource(R.string.load_kernel_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = { viewModel.autoLoadUniversal(context) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = rootAvailable && !viewModel.isBusy.value,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                    ) {
+                        Icon(Icons.Default.Bolt, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = stringResource(R.string.load_kernel), fontWeight = FontWeight.Bold)
+                    }
+                    if (viewModel.isBusy.value) {
+                        Text(
+                            text = ">> ${viewModel.busyStep.value}",
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = Color(0xFFFFAB40)
+                        )
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-
-            // Actions
-            Column(modifier = Modifier.fillMaxWidth()) {
-                // UNIVERSAL AUTO-LOAD button (works on all kernels, auto-fixes problems)
-                Button(
-                    onClick = { viewModel.autoLoadUniversal(context) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = rootAvailable && !viewModel.isBusy.value,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-                ) {
-                    Icon(Icons.Default.Bolt, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = stringResource(R.string.auto_load), fontWeight = FontWeight.Bold)
-                }
-                Text(
-                    text = stringResource(R.string.auto_load_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Button(
-                        onClick = { viewModel.loadModule(context) },
-                        modifier = Modifier.weight(1f),
-                        enabled = viewModel.pickedFileUri.value != null && rootAvailable
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = stringResource(R.string.insmod))
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Button(
-                        onClick = { viewModel.unloadModule() },
-                        modifier = Modifier.weight(1f),
-                        enabled = viewModel.pickedFileName.value != null && rootAvailable
-                    ) {
-                        Icon(Icons.Default.Stop, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = stringResource(R.string.rmmod))
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                // Force button for 4.9.186 .ko on 4.9.337 kernel
-                OutlinedButton(
-                    onClick = { viewModel.loadModuleForce(context) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = viewModel.pickedFileUri.value != null && rootAvailable
-                ) {
-                    Text(text = stringResource(R.string.insmod_force))
-                }
-                Text(
-                    text = stringResource(R.string.force_load_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
