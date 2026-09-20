@@ -63,5 +63,7 @@ docs/screenshots/*.png
 /driver/modinfo.txt
 /driver/wsl_probe.txt
 /driver/wsl_live.txt
+/driver/native_status.txt
+/driver/rebuild_native.txt
 /driver/logs/
 /build_log.txt
