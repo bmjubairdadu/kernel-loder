@@ -13,4 +13,4 @@ data object WarningRoute : NavKey
 data object CreditsRoute : NavKey
 
 @Serializable
-data object TerminalRoute : NavKey
+data object ConsoleRoute : NavKey

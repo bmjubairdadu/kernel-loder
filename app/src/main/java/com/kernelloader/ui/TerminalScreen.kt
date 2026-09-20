@@ -59,7 +59,7 @@ private val colorsByType = mapOf(
 )
 
 @Composable
-fun TerminalScreen(
+fun ConsoleScreen(
     viewModel: DriverViewModel,
     onBack: () -> Unit
 ) {
@@ -92,7 +92,7 @@ fun TerminalScreen(
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
-                Text(text = "Kernel Loder Terminal", style = MaterialTheme.typography.titleLarge)
+                Text(text = "Kernel Loder Console", style = MaterialTheme.typography.titleLarge)
                 Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = { clipboardManager.setText(AnnotatedString(viewModel.getTerminalText())) }) {
                     Icon(Icons.Default.Bolt, contentDescription = "Copy terminal")

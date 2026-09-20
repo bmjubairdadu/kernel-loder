@@ -1,4 +1,11 @@
 <resources>
+    <!-- Launcher / splash background: dark branded -->
+    <color name="splash_background">#FF0B1220</color>
 
-    <style name="Theme.KernelLoder" parent="Theme.MaterialComponents.Light" />
+    <style name="Theme.KernelLoder" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/splash_background</item>
+        <item name="android:navigationBarColor">@color/splash_background</item>
+    </style>
 </resources>

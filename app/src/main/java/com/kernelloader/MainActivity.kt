@@ -60,6 +60,7 @@ import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.ui.NavDisplay
+import com.kernelloader.driver.EmbeddedDrivers
 import com.kernelloader.driver.DriverViewModel
 import com.kernelloader.root.RootChecker
 import com.kernelloader.ui.MainRoute
@@ -78,8 +79,8 @@ import androidx.compose.ui.res.stringResource
 import com.kernelloader.R
 import com.kernelloader.ui.CreditsRoute
 import com.kernelloader.ui.CreditsScreen
-import com.kernelloader.ui.TerminalRoute
-import com.kernelloader.ui.TerminalScreen
+import com.kernelloader.ui.ConsoleRoute
+import com.kernelloader.ui.ConsoleScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,7 +95,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             KernelLoderTheme {
-                val backStack = remember { NavBackStack<NavKey>(WarningRoute) }
+                val backStack = remember { NavBackStack<NavKey>(MainRoute) }
                 
                 NavDisplay(
                     backStack = backStack,
@@ -110,14 +111,14 @@ class MainActivity : ComponentActivity() {
                             is MainRoute -> NavEntry<NavKey>(key) {
                                 MainScreen(
                                     onNavigateToCredits = { backStack.add(CreditsRoute) },
-                                    onNavigateToTerminal = { backStack.add(TerminalRoute) }
+                                    onNavigateToConsole = { backStack.add(ConsoleRoute) }
                                 )
                             }
                             is CreditsRoute -> NavEntry<NavKey>(key) {
                                 CreditsScreen(onBack = { backStack.removeLastOrNull() })
                             }
-                            is TerminalRoute -> NavEntry<NavKey>(key) {
-                                TerminalScreen(
+                            is ConsoleRoute -> NavEntry<NavKey>(key) {
+                                ConsoleScreen(
                                     viewModel = viewModel(),
                                     onBack = { backStack.removeLastOrNull() }
                                 )
@@ -135,17 +136,19 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     viewModel: DriverViewModel = viewModel(),
     onNavigateToCredits: () -> Unit,
-    onNavigateToTerminal: () -> Unit
+    onNavigateToConsole: () -> Unit
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    
+
     val rootAvailable = remember { RootChecker.isRootAvailable() }
     val kernelVersion = remember { RootChecker.getKernelVersion() }
     val compatMsg = remember { RootChecker.getCompatibilityMessage() }
     // Universal: green when an exact driver matches this kernel, else warning colour.
     // Device / model / brand is never checked - only the kernel release matters.
     val compatOk = remember { compatMsg.startsWith("OK") }
+
+    val driverCount = remember { EmbeddedDrivers.getAvailableDrivers(context).size }
 
     val pickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -186,8 +189,8 @@ fun MainScreen(
                                 style = MaterialTheme.typography.headlineSmall
                             )
                         }
-                        IconButton(onClick = onNavigateToTerminal) {
-                            Icon(Icons.Default.Terminal, contentDescription = stringResource(R.string.terminal))
+                        IconButton(onClick = onNavigateToConsole) {
+                            Icon(Icons.Default.Terminal, contentDescription = stringResource(R.string.console))
                         }
                         IconButton(onClick = onNavigateToCredits) {
                             Icon(Icons.Default.Info, contentDescription = stringResource(R.string.credits))
@@ -223,13 +226,23 @@ fun MainScreen(
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
-            // Driver Picker
+    // Driver Picker
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = stringResource(R.string.driver_selection), style = MaterialTheme.typography.titleMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Storage, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = stringResource(R.string.driver_selection), style = MaterialTheme.typography.titleMedium)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.embedded_drivers_title) + ": " + driverCount + " " + stringResource(R.string.embedded_available),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton(

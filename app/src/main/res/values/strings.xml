@@ -35,7 +35,9 @@
     <string name="auto_load">⚡ AUTO LOAD (Universal)</string>
     <string name="auto_load_hint">Works on ALL kernels (old + new). Auto-fixes problems: SELinux, permissions, vermagic mismatch, force-load. No file picked? Auto-selects best built-in driver.</string>
     <string name="terminal">Terminal</string>
+    <string name="console">Console</string>
     <string name="terminal_hint">Live loader status - loader je ki kortese sob ekhane dekha jabe</string>
+    <string name="console_hint">Status console - copy kora jay</string>
     <string name="found">FOUND</string>
     <string name="not_found">NOT FOUND</string>
     <string name="close">Close</string>
