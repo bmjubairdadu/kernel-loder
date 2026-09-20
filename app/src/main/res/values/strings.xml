@@ -2,7 +2,8 @@
     <string name="app_name">Kernel Loder</string>
     <string name="kernel_loader">Kernel Loader</string>
     <string name="load_kernel">⚡ Load Kernel</string>
-    <string name="load_kernel_hint">Auto-detects your kernel version and loads the best matching driver. Root required. Full process shown in console.</string>
+    <string name="import_ko">Import .ko</string>
+    <string name="no_builtin_drivers">No built-in drivers. Import a .ko file or build from kernel source.</string>
     <string name="kernel_version">Kernel: %s</string>
     <string name="root_ok">Root: OK</string>
     <string name="root_missing">Root: MISSING</string>
