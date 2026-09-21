@@ -4,7 +4,7 @@ Kernel NAME does not matter - only X.Y.Z numbers do. Every version below
 is loadable: EXACT module when bundled, otherwise nearest-series module +
 automatic vermagic patch + force-load ladder.
 
-**Bundled modules:** 4.9.337, 4.9.307, 4.9.186, 4.14.117, 4.14.180, 4.14.186, 4.19.81, 4.19.113, 4.19.157, 4.19.191, 5.4.61, 5.4.191, 5.10.198, 5.15.167, 6.1.112, 6.6.57, 3.10.108, 3.12.74, 3.7.10, 3.8.13, 3.9.11
+**Bundled modules:** 4.9.337, 4.9.307, 4.9.186, 4.14.117, 4.14.180, 4.14.186, 4.19.81, 4.19.113, 4.19.157, 4.19.191, 5.4.61, 5.4.191, 5.10.198, 5.15.167, 6.1.112, 6.6.57, 3.10.108, 3.11.10, 3.12.74, 3.13.11, 3.14.79, 3.15.10, 3.16.85, 3.17.8, 3.18.140, 3.19.8, 3.7.10, 3.8.13, 3.9.11, 4.0.9, 4.1.52, 4.2.8, 4.3.6
 
 ## Linux 3.x
 
@@ -21,27 +21,27 @@ automatic vermagic patch + force-load ladder.
 | 3.8.13 | 3.8.13 | **EXACT** |
 | 3.9.11 | 3.9.11 | **EXACT** |
 | 3.10.108 | 3.10.108 | **EXACT** |
-| 3.11.10 | 3.12.74 | patch + force-load |
+| 3.11.10 | 3.11.10 | **EXACT** |
 | 3.12.74 | 3.12.74 | **EXACT** |
-| 3.13.11 | 3.12.74 | patch + force-load |
-| 3.14.79 | 3.12.74 | patch + force-load |
-| 3.15.10 | 3.12.74 | patch + force-load |
-| 3.16.85 | 3.12.74 | patch + force-load |
-| 3.17.8 | 3.12.74 | patch + force-load |
-| 3.18.140 | 3.12.74 | patch + force-load |
-| 3.19.8 | 3.12.74 | patch + force-load |
+| 3.13.11 | 3.13.11 | **EXACT** |
+| 3.14.79 | 3.14.79 | **EXACT** |
+| 3.15.10 | 3.15.10 | **EXACT** |
+| 3.16.85 | 3.16.85 | **EXACT** |
+| 3.17.8 | 3.17.8 | **EXACT** |
+| 3.18.140 | 3.18.140 | **EXACT** |
+| 3.19.8 | 3.19.8 | **EXACT** |
 
 ## Linux 4.x
 
 | Kernel version | Bundled module used | Mode |
 |---|---|---|
-| 4.0.9 | 4.9.186 | patch + force-load |
-| 4.1.52 | 4.9.186 | patch + force-load |
-| 4.2.8 | 4.9.186 | patch + force-load |
-| 4.3.6 | 4.9.186 | patch + force-load |
-| 4.4.302 | 4.9.307 | patch + force-load |
-| 4.5.7 | 4.9.186 | patch + force-load |
-| 4.6.7 | 4.9.186 | patch + force-load |
+| 4.0.9 | 4.0.9 | **EXACT** |
+| 4.1.52 | 4.1.52 | **EXACT** |
+| 4.2.8 | 4.2.8 | **EXACT** |
+| 4.3.6 | 4.3.6 | **EXACT** |
+| 4.4.302 | 4.3.6 | patch + force-load |
+| 4.5.7 | 4.3.6 | patch + force-load |
+| 4.6.7 | 4.3.6 | patch + force-load |
 | 4.7.10 | 4.9.186 | patch + force-load |
 | 4.8.17 | 4.9.186 | patch + force-load |
 | 4.9.337 | 4.9.337 | **EXACT** |
@@ -54,6 +54,7 @@ automatic vermagic patch + force-load ladder.
 | 4.16.18 | 4.14.117 | patch + force-load |
 | 4.17.19 | 4.19.81 | patch + force-load |
 | 4.18.20 | 4.19.81 | patch + force-load |
+| 4.19.127 | 4.19.113 | patch + force-load |
 | 4.19.325 | 4.19.191 | patch + force-load |
 | 4.20.17 | 4.19.81 | patch + force-load |
 
