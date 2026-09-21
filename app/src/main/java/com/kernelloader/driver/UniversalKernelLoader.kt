@@ -483,11 +483,14 @@ object UniversalKernelLoader {
             val dMajor = dm?.groupValues?.get(1)?.toIntOrNull()
             val dMinor = dm?.groupValues?.get(2)?.toIntOrNull()
             val dPatch = dm?.groupValues?.get(3)?.toIntOrNull()
-
-            if (realShort.isNotEmpty() &&
+            val exactShort = realShort.isNotEmpty() &&
                 realShort == RootChecker.kernelShortVersion(kernelRelease)
-            ) {
-                s = 1200    // exact X.Y.Z match - kernel NAME irrelevant, only numbers count
+
+            if (exactShort) {
+                // Exact X.Y.Z match - kernel NAME irrelevant, only numbers count.
+                // Same-release UNI module is the cross-device pick (1200 + 60):
+                // a Daisy NATIVE module only overtakes it on a real Daisy kernel.
+                s = 1200
             } else if (d.version == kernelRelease) {
                 s = 1000
             } else if (kernelRelease.startsWith(d.version)) {
@@ -512,11 +515,18 @@ object UniversalKernelLoader {
                 }
             }
             if (s > 0) {
-                // Native builds (compiled against a real kernel tree) always win
-                if (d.type == "NATIVE" || d.type == "KERNEL" || d.type == "DAISY") {
-                    s += if (kernelRelease.startsWith(d.version) || d.version.startsWith(kernelRelease)) 200 else 5
+                // Universal mainline builds (UNI) always win cross-device ties:
+                // same X.Y.Z works on every vendor kernel via vermagic patch.
+                // Device builds (NATIVE/DAISY) only get a bonus on an actual
+                // DaisyForGaming kernel, so other phones pick the UNI module.
+                val realName = realRelease.lowercase()
+                val runningName = kernelRelease.lowercase()
+                val daisyPair =
+                    realName.contains("daisy") && runningName.contains("daisy")
+                if (d.type == "UNI") s += 60
+                if ((d.type == "NATIVE" || d.type == "KERNEL" || d.type == "DAISY") && daisyPair) {
+                    s += 200
                 }
-                if (d.type == "UNI") s += 10  // our own universal builds beat legacy RT on exact ties
                 if (d.type == "QX") s += 5   // tie-break: QX over RT
             }
             return s

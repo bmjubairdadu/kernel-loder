@@ -83,8 +83,8 @@ object EmbeddedDrivers {
             val type = if (idx == -1) "KERNEL" else base.substring(0, idx).uppercase(Locale.US)
             val version = if (idx == -1) base else base.substring(idx + 1)
             val description = when (type) {
-                "NATIVE", "DAISY" -> "Native build for kernel $version (universal)"
-                "UNI" -> "Universal build for kernel $version (loads on any device with the same X.Y.Z)"
+                "UNI" -> "Universal build for kernel $version (any device)"
+                "NATIVE", "DAISY" -> "Daisy device build for kernel $version (DaisyForGaming tree)"
                 "QX" -> "Legacy QX build for $version"
                 "RT" -> "Legacy RT build for $version"
                 else -> "Kernel module build for $version"
@@ -128,10 +128,11 @@ object EmbeddedDrivers {
     }
 
     private fun typeOrder(t: String): Int = when (t) {
-        "NATIVE", "DAISY", "KERNEL" -> 0
-        "QX" -> 1
-        "RT" -> 2
-        else -> 3
+        "UNI", "KERNEL" -> 0
+        "NATIVE", "DAISY" -> 1
+        "QX" -> 2
+        "RT" -> 3
+        else -> 4
     }
 
     private fun assetExists(context: Context, assetPath: String): Boolean {
