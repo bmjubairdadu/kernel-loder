@@ -354,6 +354,13 @@ object UniversalKernelLoader {
     private fun finish(vm: DriverViewModel, ok: Boolean, msg: String) {
         vm.autoLoadOk.value = ok
         vm.autoLoadStatus.value = msg
+        if (!ok) {
+            vm.tlog("SUPPORT: ei kernel er jonno exact loader paoa jay nai ba load fail hoyeche.", "WARN")
+            vm.tlog(
+                "SUPPORT: WhatsApp e message korun - apnar kernel er jonno custom loader banie debo: wa.me/${SupportContact.WHATSAPP_NUMBER}",
+                "FIX"
+            )
+        }
         vm.tstep("")
     }
 

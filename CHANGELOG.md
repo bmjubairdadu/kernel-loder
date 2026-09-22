@@ -6,6 +6,31 @@ semantic-ish version tags (`<major>.<minor>-<flavour>`).
 
 ---
 
+## [2.3-universal] — 2026-09-22 (versionCode 8)
+
+### Added
+* **OTA kernel loader** (`OtaDriverStore`): manifest `drivers.json` fetched from the
+  `drivers` branch at launch; matching loader downloaded, `insmod`-loaded and verified.
+* **SafetyGuard**: refuses wrong major/minor loads, blocks loading after kernel
+  panic/oops in dmesg, `rmmod` rescue on failure.
+* **WhatsApp support** (+8801785917145) with kernel version prefilled + custom text.
+* **In-app auto-update** (`AppUpdateChecker`) from GitHub Releases `latest` API,
+  FileProvider APK install flow.
+* `scripts/publish_apk.ps1` — one-command release APK upload.
+
+### Changed
+* **Zero bundled `.ko`**: `app/src/main/assets/drivers/` ships empty; release APK ~2.5 MB.
+* Supported list newest-first with `buildDate`, `LATEST` / `THIS DEVICE` badges.
+* R8 shrink + obfuscation, release signed with debug keystore for in-place updates.
+
+---
+
+## [2.2-universal] — 2026-09-21 (versionCode 7)
+
+OTA groundwork release (superseded by 2.3).
+
+---
+
 ## [2.1-universal] — 2026-09-19
 
 ### Added

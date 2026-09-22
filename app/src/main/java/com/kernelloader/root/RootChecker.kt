@@ -38,6 +38,16 @@ object RootChecker {
         }
     }
 
+    /** Full `uname -r` release string, or null when it cannot be read. */
+    fun getKernelRelease(): String? {
+        return try {
+            getKernelVersionRoot()
+                .takeIf { it.isNotBlank() && !it.startsWith("Error") }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** Extract "X.Y.Z" from any kernel release string (e.g. "4.9.337-custom-kernel"). */
     fun kernelShortVersion(kernelRelease: String = getKernelVersion()): String {
         val m = KERNEL_RE.find(kernelRelease) ?: return kernelRelease.trim()

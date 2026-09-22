@@ -2,7 +2,10 @@
 # ============================================================================
 # Kernel Loder - UNIVERSAL .ko FACTORY (WSL)
 # Builds kloader_driver.ko for EVERY kernel.org release in versions.txt.
-#  - skips versions we already ship (4.9.337 / 4.9.307)
+#  - native Daisy device builds (4.9.337 / 4.9.307) stay shipped as-is AND the
+#    pipeline also builds mainline uni_4.9.337 / uni_4.9.307 for other phones
+#    with the same X.Y.Z (the loader only prefers the Daisy build on a real
+#    Daisy kernel)
 #  - skips versions whose source tarball does not exist on kernel.org (404)
 #  - per-version: defconfig (MODVERSIONS/SIG/BTF off -> loadable on ANY device
 #    with the same X.Y.Z), modules_prepare, module build, vermagic check,
@@ -25,10 +28,21 @@ mkdir -p "$OUT" "$LOGDIR" "$WORK"
 log(){ echo "$(date +%m-%d\ %H:%M:%S) $*" >> "$STATUS"; }
 
 # ---------- deps ----------
-log "SETUP: installing build deps..."
+# Only touch apt when something is actually missing. The archive mirrors are often
+# unreachable from WSL, and a bare `apt-get update` then retries for minutes while
+# every package we need is already installed - which stalled a whole relaunch.
 export DEBIAN_FRONTEND=noninteractive
-(apt-get update -y && apt-get install -y curl xz-utils bc bison flex libssl-dev libelf-dev git) >> $LOGDIR/deps.log 2>&1 \
-  || log "SETUP: apt FAILED (continuing, deps may already exist)"
+have_all=1
+for t in bc bison flex curl xz git; do
+  command -v "$t" >/dev/null 2>&1 || have_all=0
+done
+if [ "$have_all" -eq 1 ]; then
+  log "SETUP: build deps already present - apt skipped"
+else
+  log "SETUP: installing build deps..."
+  (apt-get update -y && apt-get install -y curl xz-utils bc bison flex libssl-dev libelf-dev git) >> $LOGDIR/deps.log 2>&1 \
+    || log "SETUP: apt FAILED (continuing, deps may already exist)"
+fi
 
 # ---------- toolchains ----------
 if [ ! -x "$TOOL/gcc49/bin/aarch64-linux-android-gcc" ]; then
@@ -36,8 +50,8 @@ if [ ! -x "$TOOL/gcc49/bin/aarch64-linux-android-gcc" ]; then
   git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 "$TOOL/gcc49" >> $LOGDIR/toolchain.log 2>&1 \
     || log "TOOLCHAIN: gcc49 clone FAILED"
 fi
-if [ ! -x "$TOOL/proton/bin/clang" ]; then
-  log "TOOLCHAIN: proton unavailable - installing apt clang..."
+if [ ! -x "$TOOL/proton/bin/clang" ] && ! command -v clang >/dev/null 2>&1; then
+  log "TOOLCHAIN: no proton and no system clang - installing apt clang..."
   apt-get install -y clang lld >> $LOGDIR/deps.log 2>&1 || log "TOOLCHAIN: apt clang FAILED"
 fi
 
@@ -144,7 +158,21 @@ build_one(){
       # old-kernel host tools (dtc "multiple definition of yylloc" etc.)
       make ARCH=arm64 -j"$(nproc)" modules_prepare HOSTCFLAGS="-O2 -fcommon" || exit 1
       echo "--- module build ---"
-      make ARCH=arm64 M="$MD" modules HOSTCFLAGS="-O2 -fcommon" || exit 1
+      if ! make ARCH=arm64 M="$MD" modules HOSTCFLAGS="-O2 -fcommon"; then
+        # Some arm64 trees (3.14, and 4.2/4.3 with CONFIG_ARM64_ERRATUM_843419) build
+        # modules with -mcmodel=large together with -fPIC, which both GCC and clang
+        # reject ("sorry, unimplemented: code model 'large' with -fpic"). The
+        # workaround exists to emit PLT stubs for the erratum - our driver never runs
+        # that sequence, so drop it and force -fno-pic, then build once more.
+        if grep -q "code model 'large' with -fpic" "$TLOG" 2>/dev/null; then
+          echo "--- PIC RETRY: dropping ARM64 erratum + forcing -fno-pic ---"
+          ./scripts/config -d ARM64_ERRATUM_843419 -d ARM64_ERRATUM_845719 2>/dev/null || true
+          make ARCH=arm64 olddefconfig >/dev/null 2>&1 || true
+          make ARCH=arm64 M="$MD" modules HOSTCFLAGS="-O2 -fcommon" KCFLAGS="-fno-pic -fno-pie" || exit 1
+        else
+          exit 1
+        fi
+      fi
       local MAGIC
       MAGIC=$(strings "$MD/kloader_driver.ko" | grep -m1 '^vermagic=')
       echo "VERMAGIC: $MAGIC"

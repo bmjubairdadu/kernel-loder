@@ -7,7 +7,10 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kernelloader.BuildConfig
+import com.kernelloader.driver.OtaDriverStore
 import com.kernelloader.root.RootChecker
+import com.kernelloader.update.AppUpdateChecker
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -226,6 +229,100 @@ class DriverViewModel : ViewModel() {
     var autoLoadStatus = mutableStateOf("")   // final one-line result
     var autoLoadOk = mutableStateOf<Boolean?>(null)
 
+    // ---- OTA (GitHub driver database) state ----
+    var remoteManifest = mutableStateOf<OtaDriverStore.Manifest?>(null)
+    var manifestStatus = mutableStateOf("IDLE")   // IDLE / LOADING / OK / EMPTY / OFFLINE
+
+    // ---- In-app auto-update (GitHub Releases database) state ----
+    var appUpdate = mutableStateOf<AppUpdateChecker.UpdateInfo?>(null)
+    var updateStatus = mutableStateOf("IDLE")     // IDLE / CHECKING / NONE / AVAILABLE / DOWNLOADING / DONE / ERROR
+    var updateProgress = mutableStateOf(-1)       // 0..100 while DOWNLOADING, -1 otherwise
+    var updateMsg = mutableStateOf("")
+
+    /**
+     * Auto-update check: compare our versionCode with the newest GitHub
+     * Release. Runs automatically on app open; console-logged like everything
+     * else so the user always sees what is happening.
+     */
+    fun checkForAppUpdate() {
+        if (updateStatus.value == "CHECKING" || updateStatus.value == "DOWNLOADING") return
+        updateStatus.value = "CHECKING"
+        tlog("UPDATE: checking GitHub Releases (current v${BuildConfig.VERSION_CODE} ${BuildConfig.VERSION_NAME})...", "INFO")
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = AppUpdateChecker.check(BuildConfig.UPDATE_API_URL, BuildConfig.VERSION_CODE)
+            withContext(Dispatchers.Main) {
+                when (result) {
+                    is AppUpdateChecker.UpdateCheck.Available -> {
+                        appUpdate.value = result.info
+                        updateStatus.value = "AVAILABLE"
+                        tlog(
+                            "UPDATE: new version found - v${result.info.versionCode} ${result.info.versionName} " +
+                                    "(${result.info.apkSize / 1024} KB, ${result.info.publishedAt.take(10)})",
+                            "OK"
+                        )
+                        tlog("UPDATE: tap the update banner to install", "INFO")
+                    }
+                    AppUpdateChecker.UpdateCheck.UpToDate -> {
+                        appUpdate.value = null
+                        updateStatus.value = "NONE"
+                        tlog("UPDATE: app is up-to-date (v${BuildConfig.VERSION_CODE})", "OK")
+                    }
+                    AppUpdateChecker.UpdateCheck.Offline -> {
+                        if (updateStatus.value != "AVAILABLE") updateStatus.value = "ERROR"
+                        tlog("UPDATE: GitHub unreachable (offline?) - skipped", "WARN")
+                    }
+                }
+            }
+        }
+    }
+
+    /** Download the newer APK from GitHub and open the system installer. */
+    fun installAppUpdate(context: Context) {
+        val info = appUpdate.value ?: return
+        updateStatus.value = "DOWNLOADING"
+        updateProgress.value = 0
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!AppUpdateChecker.canInstall(context)) {
+                withContext(Dispatchers.Main) {
+                    tlog("UPDATE: \"install unknown apps\" permission needed - opening settings", "WARN")
+                    updateStatus.value = "AVAILABLE"
+                    updateProgress.value = -1
+                    AppUpdateChecker.requestInstallPermission(context)
+                }
+                return@launch
+            }
+            val msg = AppUpdateChecker.downloadAndInstall(context, info) { pct ->
+                viewModelScope.launch(Dispatchers.Main) { updateProgress.value = pct }
+            }
+            withContext(Dispatchers.Main) {
+                updateMsg.value = msg
+                updateStatus.value = if (msg.contains("installer opened")) "DONE" else "ERROR"
+                updateProgress.value = -1
+                tlog(msg, if (updateStatus.value == "DONE") "OK" else "ERR")
+            }
+        }
+    }
+
+    /**
+     * Fetch drivers.json from the GitHub database so the UI can show every
+     * kernel version that has a loader available. Runs automatically when the
+     * app opens and can be pulled to refresh manually.
+     */
+    fun refreshManifest() {
+        manifestStatus.value = "LOADING"
+        viewModelScope.launch(Dispatchers.IO) {
+            val m = try { OtaDriverStore.fetchManifest() } catch (e: Exception) { null }
+            withContext(Dispatchers.Main) {
+                remoteManifest.value = m
+                manifestStatus.value = when {
+                    m == null -> "OFFLINE"
+                    m.drivers.isEmpty() -> "EMPTY"
+                    else -> "OK"
+                }
+            }
+        }
+    }
+
     private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
@@ -286,13 +383,185 @@ class DriverViewModel : ViewModel() {
     }
 
     /**
+     * OTA auto-load: try to fetch an exact-match .ko from the OTA manifest first.
+     * Returns true if a driver was downloaded and loaded.
+     */
+    private suspend fun runOtaLoad(context: Context): Boolean {
+        tlog("OTA: checking manifest...", "INFO")
+        val manifest = OtaDriverStore.fetchManifest() ?: run {
+            tlog("OTA: manifest unavailable (offline or network error)", "WARN")
+            return false
+        }
+        if (manifest.drivers.isEmpty()) {
+            tlog("OTA: manifest has no drivers", "WARN")
+            return false
+        }
+        val kernel = RootChecker.getKernelRelease() ?: return false
+        val resolved = OtaDriverStore.resolve(manifest, kernel)
+        when (resolved) {
+            is OtaDriverStore.ResolveResult.Exact -> {
+                tlog("OTA: exact match found for $kernel", "OK")
+                return downloadAndLoadOta(context, manifest, resolved.entry)
+            }
+            is OtaDriverStore.ResolveResult.Near -> {
+                val target = resolved.entry.version
+                tlog(
+                    "OTA: exact match nai; nearest loader = $target (distance ${resolved.distance})",
+                    "WARN"
+                )
+                // ---------- REBOOT GUARD 1: same major.minor holei force-load ----------
+                if (!SafetyGuard.canForceLoad(kernel, target)) {
+                    SafetyGuard.refusalLines(kernel, target).forEach { tlog(it.first, it.second) }
+                    return false
+                }
+                // ---------- REBOOT GUARD 2: kernel already sick hole kichu load korbo na ----------
+                if (SafetyGuard.kernelLooksUnstable()) {
+                    SafetyGuard.unstableLines().forEach { tlog(it.first, it.second) }
+                    return false
+                }
+                tlog(
+                    "SAFETY: same kernel series (${SafetyGuard.majorMinor(kernel)}) - " +
+                            "nearest loader force-load chesta",
+                    "FIX"
+                )
+                return downloadAndLoadOta(context, manifest, resolved.entry, force = true)
+            }
+            is OtaDriverStore.ResolveResult.None -> {
+                tlog("OTA: no driver available for this kernel series", "INFO")
+                return false
+            }
+        }
+    }
+
+    private suspend fun downloadAndLoadOta(
+        context: Context,
+        manifest: OtaDriverStore.Manifest,
+        entry: OtaDriverStore.DriverEntry,
+        force: Boolean = false
+    ): Boolean {
+        val tmp = File(context.cacheDir, "ota_${entry.file.substringAfterLast('/')}.ko")
+        val downloaded = OtaDriverStore.downloadDriver(
+            context = context,
+            baseUrl = manifest.baseUrl,
+            entry = entry,
+            onLog = { msg, kind -> tlog(msg, kind) }
+        ) ?: return false
+        try {
+            if (!UniversalKernelLoader.ensureElf(downloaded)) {
+                tlog("OTA: downloaded file is not a valid ELF .ko", "ERR")
+                return false
+            }
+
+            val kernel = RootChecker.getKernelRelease() ?: return false
+            tlog("OTA: loading ${downloaded.name} ($kernel)...", "INFO")
+
+            // ---------- REBOOT GUARD 3: baseline of loaded modules ----------
+            val before = SafetyGuard.loadedModuleNames()
+            if (before.isNotEmpty()) {
+                tlog("SAFETY: baseline modules = ${before.size} (rescue rmmod ready)", "INFO")
+            }
+
+            // If the .ko was built for another release, patch vermagic first
+            // (mismatched vermagic => kernel rejects, or panic when forced).
+            val vermagic = try { UniversalKernelLoader.readVermagic(downloaded) } catch (e: Exception) { null }
+            if (vermagic != null &&
+                RootChecker.kernelShortVersion(vermagic) != RootChecker.kernelShortVersion(kernel)
+            ) {
+                tlog("FIX: vermagic \"$vermagic\" != device \"$kernel\" - patching", "FIX")
+                if (UniversalKernelLoader.patchVermagic(downloaded, kernel)) {
+                    tlog("FIX: vermagic patched OK -> \"$kernel\"", "OK")
+                } else {
+                    tlog("FIX: vermagic patch failed (string too long) - force-load e chesta korbo", "WARN")
+                }
+            }
+
+            var res = Shell.cmd("insmod ${downloaded.absolutePath}").exec()
+            res.out.forEach { if (it.isNotBlank()) tlog(it, "OUT") }
+            res.err.forEach { if (it.isNotBlank()) tlog(it, "ERR") }
+
+            // force-load retry (only in nearest-match mode, guard already approved it)
+            if (!res.isSuccess && force) {
+                tlog("FIX: insmod -f (force load) - $_forceNote", "FIX")
+                res = Shell.cmd("insmod -f ${downloaded.absolutePath}").exec()
+                res.out.forEach { if (it.isNotBlank()) tlog(it, "OUT") }
+                res.err.forEach { if (it.isNotBlank()) tlog(it, "ERR") }
+            }
+
+            if (!res.isSuccess) {
+                tlog("OTA: insmod failed (exit ${res.code})", "ERR")
+                val errText = (res.out + res.err).joinToString("\n")
+                if (errText.contains("Invalid module format", true) ||
+                    errText.contains("vermagic", true) ||
+                    errText.contains("Exec format error", true)
+                ) {
+                    tlog("DIAGNOSE: vermagic / module format mismatch - ei loader ei kernel e cholbe na", "WARN")
+                    tlog("ACTION: phone restart hoy ni (kichu force kora hoy ni).", "INFO")
+                }
+                tlog("SUPPORT: ei kernel ($kernel) er jonno custom loader lagbe - nicher WhatsApp button chapun", "FIX")
+                return false
+            }
+
+            tlog("OTA: insmod OK (exit ${res.code})", "OK")
+
+            // ---------- REBOOT GUARD 4: post-load health check + rescue ----------
+            waitForStability()
+            if (SafetyGuard.kernelLooksUnstable()) {
+                tlog("SAFETY: load er por kernel unstable (panic/oops signature dhorа porlo)", "ERR")
+                val newMods = SafetyGuard.newlyLoaded(before)
+                if (newMods.isEmpty()) {
+                    tlog("SAFETY: notun module name paoa jay nai - /proc/modules check korun", "WARN")
+                }
+                var rescued = false
+                newMods.forEach { mod ->
+                    tlog("RESCUE: rmmod $mod (phone restart thekano hocche)", "FIX")
+                    if (SafetyGuard.rescueUnload(mod)) {
+                        rescued = true
+                        tlog("RESCUE: $mod unloaded - kernel stable, phone restart hobe na", "OK")
+                    } else {
+                        tlog("RESCUE: rmmod $mod fail - module ta load e ache", "WARN")
+                    }
+                }
+                tlog(
+                    if (rescued)
+                        "RESULT: loader unsafe chilo, tai ber kore dewa hoyeche. Phone restart hoy ni."
+                    else
+                        "RESULT: loader unsafe - console log ta WhatsApp e pathiye din (restart er age)",
+                    "WARN"
+                )
+                tlog("SUPPORT: nicher WhatsApp button theke custom loader request korun", "FIX")
+                withContext(Dispatchers.Main) {
+                    autoLoadOk.value = false
+                    autoLoadStatus.value = if (rescued)
+                        "Unsafe loader removed (no restart)" else "Loader unstable - contact support"
+                    tstep("")
+                }
+                return false
+            }
+
+            tlog("SAFETY: kernel stable - phone restart risk nai", "OK")
+            withContext(Dispatchers.Main) { verifyModule() }
+            return true
+        } finally {
+            if (downloaded != tmp && downloaded.exists()) downloaded.delete()
+        }
+    }
+
+    /** Small settle window so dmesg can show a problem before we call it a success. */
+    private suspend fun waitForStability() {
+        withContext(Dispatchers.IO) { try { Thread.sleep(900) } catch (e: InterruptedException) { } }
+    }
+
+    private val _forceNote: String
+        get() = "nearest-series loader, restart guard active"
+
+    /**
      * UNIVERSAL AUTO-LOAD:
      * - Works on old & new kernels
      * - Auto-fixes problems (SELinux, permissions, vermagic mismatch, force-load)
      * - Auto-picks best embedded driver if no file is picked
      * - Streams every step into the terminal
      */
-    fun autoLoadUniversal(context: Context) {
+    fun autoLoadUniversal(context: Context, preferOta: Boolean = true) {
         if (isBusy.value) return
         isBusy.value = true
         busyStep.value = "Starting..."
@@ -300,7 +569,18 @@ class DriverViewModel : ViewModel() {
         autoLoadStatus.value = ""
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                UniversalKernelLoader.autoLoad(context, this@DriverViewModel)
+                if (preferOta) {
+                    val handled = runOtaLoad(context)
+                    if (handled) {
+                        isBusy.value = false
+                        busyStep.value = ""
+                        return@launch
+                    }
+                    tlog("OTA: no OTA driver; falling back to embedded", "INFO")
+                }
+                withContext(Dispatchers.Main) {
+                    UniversalKernelLoader.autoLoad(context, this@DriverViewModel)
+                }
             } catch (e: Exception) {
                 tlog("FATAL: ${e.message}", "ERR")
                 autoLoadStatus.value = "FATAL: ${e.message}"
@@ -486,6 +766,14 @@ class DriverViewModel : ViewModel() {
                                 addLog("verify after insmod", vRes.out, vRes.err, vRes.code)
                             }
                             withContext(Dispatchers.Main) { verifyModule() }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                tlog("LOAD FAILED: ei .ko ei kernel e load hoy nai.", "ERR")
+                                tlog(
+                                    "SUPPORT: WhatsApp e message korun - apnar kernel er jonno custom loader banie debo: wa.me/${SupportContact.WHATSAPP_NUMBER}",
+                                    "FIX"
+                                )
+                            }
                         }
                         
                         cacheFile.delete()
