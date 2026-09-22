@@ -5,9 +5,9 @@ import java.net.URLEncoder
 
 /**
  * Support / custom loader request contact.
- * Jodi kono device er kernel er jonno database e loader na thake
- * ba load fail hoy, user WhatsApp e message korte parbe -
- * amra tar kernel version er jonno custom loader banie dei.
+ * When no loader exists in the database for a device's kernel,
+ * or a load fails, the user can message us on WhatsApp -
+ * we build a custom loader for their kernel version.
  */
 object SupportContact {
     /** App name used inside the message header. */
@@ -39,7 +39,7 @@ object SupportContact {
             appendLine("🤖 Android : $android (API $sdk)")
             appendLine("📦 App     : $APP_NAME")
             appendLine()
-            appendLine("❗ Database e ei kernel version er matching loader nai.")
+            appendLine("❗ No matching loader for this kernel version in the database.")
             appendLine("🛠️ Please build a custom loader (.ko) for this kernel.")
             appendLine()
             append("➖➖➖➖➖➖➖➖➖➖➖➖")

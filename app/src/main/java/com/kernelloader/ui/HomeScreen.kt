@@ -400,9 +400,9 @@ fun HomeScreen(
         }
         Card(
             modifier = Modifier.fillMaxWidth().height(250.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
+            // Fixed dark terminal background - log colors are tuned for dark,
+            // so the console stays readable in every theme.
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0D1117))
         ) {
             if (terminalLines.isEmpty()) {
                 Column(
@@ -433,7 +433,7 @@ fun HomeScreen(
                             text = "[${line.time}] ${line.text}",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp
+                                fontSize = 12.sp
                             ),
                             color = consoleLineColor(line.type),
                             modifier = Modifier.padding(vertical = 1.dp)
@@ -559,8 +559,8 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.Center
                 ) { CircularProgressIndicator(modifier = Modifier.size(22.dp)) }
                 else -> Text(
-                    text = "Internet connection paoa jacche na - driver database dekha jacche na.\n" +
-                            "Connect hoye refresh button chapon.",
+                    text = "No internet connection - driver database is not visible.\n" +
+                            "Connect, then tap the refresh button.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(18.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -574,14 +574,14 @@ fun HomeScreen(
 }
 
 /**
- * Contact card: kernel match hoy nai ba load fail hole user WhatsApp e
- * message korte parbe - pre-filled message e device model + kernel version
- * age theke jabe, tai custom loader banano easy hoy.
+ * Contact card: when no kernel matches or a load fails, the user can message
+ * us on WhatsApp - device model + kernel version are pre-filled in the
+ * message, so building a custom loader is easy.
  */
 @Composable
 private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
     val context = LocalContext.current
-    // User nijer moto extra kotha likhte parbe - sheta auto message er sathe jabe.
+    // The user's own extra note - appended to the auto message.
     var customText by remember { mutableStateOf("") }
     Card(
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 16.dp),
@@ -592,15 +592,15 @@ private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
             Text(
-                text = if (loadFailed) "LOAD FAILED - custom loader lagbe?"
-                       else "Kernel match hoyni? Custom loader lagbe?",
+                text = if (loadFailed) "LOAD FAILED - need a custom loader?"
+                       else "No kernel match? Need a custom loader?",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = if (loadFailed) Color(0xFFFF8A65) else MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = "Apnar device model ar kernel version auto message e chole jabe - " +
-                        "amra exact kernel er jonno loader banie dei.",
+                text = "Your device model and kernel version go into the message automatically - " +
+                        "we build the loader for your exact kernel.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                 modifier = Modifier.padding(top = 4.dp)
@@ -614,7 +614,7 @@ private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
                 label = { Text("Extra text (optional)", style = MaterialTheme.typography.labelMedium) },
                 placeholder = {
                     Text(
-                        "e.g. phone bootloop hocche, ei app er jonno loader lagbe",
+                        "e.g. phone keeps bootlooping, need a loader for this app",
                         style = MaterialTheme.typography.bodySmall
                     )
                 },
@@ -623,8 +623,8 @@ private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
                 textStyle = MaterialTheme.typography.bodySmall
             )
             Text(
-                text = if (customText.isBlank()) "Auto message pathano hobe (${kernelRelease})"
-                       else "Auto message + apnar text (${customText.trim().length}/300)",
+                text = if (customText.isBlank()) "Auto message will be sent (${kernelRelease})"
+                       else "Auto message + your text (${customText.trim().length}/300)",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.padding(top = 3.dp)
@@ -639,7 +639,7 @@ private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
                                 Uri.parse(SupportContact.waLink(kernelRelease, customText))
                             )
                         )
-                    } catch (_: Exception) { /* WhatsApp/browser nai */ }
+                    } catch (_: Exception) { /* no WhatsApp/browser installed */ }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
                 modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
@@ -681,12 +681,13 @@ private fun StatusChip(text: String, ok: Boolean, modifier: Modifier = Modifier)
     }
 }
 
+// High-contrast log colors, tuned for the fixed dark console background.
 private fun consoleLineColor(type: String): Color = when (type) {
-    "OK" -> Color(0xFF4CAF50)
-    "ERR" -> Color(0xFFEF5350)
-    "WARN" -> Color(0xFFFFB74D)
-    "CMD" -> Color(0xFF64B5F6)
-    "FIX" -> Color(0xFF26C6DA)
-    "OUT" -> Color(0xFF90A4AE)
-    else -> Color(0xFFB0BEC5)
+    "OK" -> Color(0xFF69F0AE)
+    "ERR" -> Color(0xFFFF6E6E)
+    "WARN" -> Color(0xFFFFD54F)
+    "CMD" -> Color(0xFF8AB4F8)
+    "FIX" -> Color(0xFF4DD0E1)
+    "OUT" -> Color(0xFFF1F3F4)
+    else -> Color(0xFFCFD8DC)
 }

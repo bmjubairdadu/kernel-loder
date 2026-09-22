@@ -41,7 +41,9 @@ class MainActivity : ComponentActivity() {
         )
         enableEdgeToEdge()
         setContent {
-            KernelLoderTheme {
+            // Fixed branded dark theme: no dynamic wallpaper colors, no light
+            // mode - background, console and badges always look the same.
+            KernelLoderTheme(darkTheme = true, dynamicColor = false) {
                 val backStack = remember { NavBackStack<NavKey>(MainRoute) }
                 NavDisplay(
                     backStack = backStack,

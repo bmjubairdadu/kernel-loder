@@ -6,6 +6,20 @@ semantic-ish version tags (`<major>.<minor>-<flavour>`).
 
 ---
 
+## [2.4-universal] — 2026-09-22 (versionCode 9)
+
+### Fixed
+* Splash logo now fixed at 192dp (was drawn at 512px intrinsic size).
+* Fixed branded dark theme everywhere (was following wallpaper/system theme).
+* Console readability: fixed dark terminal card, brighter log colors, 12sp font.
+* Database connection: real error shown in console (DNS/timeout/TLS/HTTP),
+  jsDelivr CDN mirror added as fallback, refresh flow improved.
+
+### Changed
+* All UI and console messages in English (Banglish removed).
+
+---
+
 ## [2.3-universal] — 2026-09-22 (versionCode 8)
 
 ### Added

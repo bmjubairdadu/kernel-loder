@@ -49,7 +49,7 @@ object UniversalKernelLoader {
         }
         if (!rootOk) {
             vm.tlog("ROOT: MISSING - grant Superuser/Su permission to the app!", "ERR")
-            finish(vm, false, "Root missing - superuser grant korun")
+            finish(vm, false, "Root missing - grant superuser access")
             return
         }
         vm.tlog("ROOT: OK (running as uid=0)", "OK")
@@ -105,7 +105,7 @@ object UniversalKernelLoader {
             val best = findBestEmbeddedDriver(context, kernel)
             if (best == null) {
                 vm.tlog("ERROR: no file picked AND no embedded driver found", "ERR")
-                finish(vm, false, "Kono .ko paoya jay nai - file pick korun")
+                finish(vm, false, "No .ko found - pick a file")
                 return
             }
             sourceName = best.displayName
@@ -136,7 +136,7 @@ object UniversalKernelLoader {
         vm.tstep("Validating ELF kernel module...")
         if (!ensureElf(cacheFile)) {
             vm.tlog("ERROR: file is NOT an ELF kernel module (.ko) - insmod impossible", "ERR")
-            vm.tlog("HINT: valid .ko / RT-QX installer .sh pick korun (.sh theke .ko auto extract hoy)", "WARN")
+            vm.tlog("HINT: pick a valid .ko / installer .sh (.ko is auto-extracted from .sh)", "WARN")
             finish(vm, false, "Not a valid .ko (ELF)")
             return
         }
@@ -207,10 +207,10 @@ object UniversalKernelLoader {
             finish(vm, true, "Loaded OK: $sourceName")
         } else {
             vm.tlog("==============================================", "ERR")
-            vm.tlog(" RESULT: LOAD FAILED - terminal log e detail ache", "ERR")
-            vm.tlog(" HINT: terminal e \"dmesg | tail -n 30\" likhe exact kernel error dekhun", "WARN")
+            vm.tlog(" RESULT: LOAD FAILED - details in the terminal log", "ERR")
+            vm.tlog(" HINT: run \"dmesg | tail -n 30\" in the terminal to see the exact kernel error", "WARN")
             vm.tlog("==============================================", "ERR")
-            finish(vm, false, "Load failed - terminal e detail ache")
+            finish(vm, false, "Load failed - details in the terminal")
         }
     }
 
@@ -355,9 +355,9 @@ object UniversalKernelLoader {
         vm.autoLoadOk.value = ok
         vm.autoLoadStatus.value = msg
         if (!ok) {
-            vm.tlog("SUPPORT: ei kernel er jonno exact loader paoa jay nai ba load fail hoyeche.", "WARN")
+            vm.tlog("SUPPORT: no exact loader found for this kernel, or the load failed.", "WARN")
             vm.tlog(
-                "SUPPORT: WhatsApp e message korun - apnar kernel er jonno custom loader banie debo: wa.me/${SupportContact.WHATSAPP_NUMBER}",
+                "SUPPORT: message us on WhatsApp - we will build a custom loader for your kernel: wa.me/${SupportContact.WHATSAPP_NUMBER}",
                 "FIX"
             )
         }

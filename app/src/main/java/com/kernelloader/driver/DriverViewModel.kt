@@ -310,14 +310,27 @@ class DriverViewModel : ViewModel() {
      */
     fun refreshManifest() {
         manifestStatus.value = "LOADING"
+        tlog("DB: connecting to driver database...", "INFO")
         viewModelScope.launch(Dispatchers.IO) {
-            val m = try { OtaDriverStore.fetchManifest() } catch (e: Exception) { null }
+            val (m, error) = try {
+                OtaDriverStore.fetchDetailed()
+            } catch (e: Exception) {
+                null to (e.message ?: "unexpected error")
+            }
             withContext(Dispatchers.Main) {
                 remoteManifest.value = m
                 manifestStatus.value = when {
                     m == null -> "OFFLINE"
                     m.drivers.isEmpty() -> "EMPTY"
                     else -> "OK"
+                }
+                when {
+                    m != null && m.drivers.isNotEmpty() ->
+                        tlog("DB: connected - ${m.drivers.size} loaders available", "OK")
+                    m != null ->
+                        tlog("DB: connected but database is empty", "WARN")
+                    else ->
+                        tlog("DB: connection failed - $error", "ERR")
                 }
             }
         }
@@ -389,7 +402,7 @@ class DriverViewModel : ViewModel() {
     private suspend fun runOtaLoad(context: Context): Boolean {
         tlog("OTA: checking manifest...", "INFO")
         val manifest = OtaDriverStore.fetchManifest() ?: run {
-            tlog("OTA: manifest unavailable (offline or network error)", "WARN")
+            tlog("OTA: manifest unavailable - see DB error above, then tap refresh", "WARN")
             return false
         }
         if (manifest.drivers.isEmpty()) {
@@ -406,22 +419,22 @@ class DriverViewModel : ViewModel() {
             is OtaDriverStore.ResolveResult.Near -> {
                 val target = resolved.entry.version
                 tlog(
-                    "OTA: exact match nai; nearest loader = $target (distance ${resolved.distance})",
+                    "OTA: no exact match; nearest loader = $target (distance ${resolved.distance})",
                     "WARN"
                 )
-                // ---------- REBOOT GUARD 1: same major.minor holei force-load ----------
+                // ---------- REBOOT GUARD 1: force-load only on same major.minor ----------
                 if (!SafetyGuard.canForceLoad(kernel, target)) {
                     SafetyGuard.refusalLines(kernel, target).forEach { tlog(it.first, it.second) }
                     return false
                 }
-                // ---------- REBOOT GUARD 2: kernel already sick hole kichu load korbo na ----------
+                // ---------- REBOOT GUARD 2: load nothing when the kernel is already sick ----------
                 if (SafetyGuard.kernelLooksUnstable()) {
                     SafetyGuard.unstableLines().forEach { tlog(it.first, it.second) }
                     return false
                 }
                 tlog(
                     "SAFETY: same kernel series (${SafetyGuard.majorMinor(kernel)}) - " +
-                            "nearest loader force-load chesta",
+                            "trying nearest-loader force-load",
                     "FIX"
                 )
                 return downloadAndLoadOta(context, manifest, resolved.entry, force = true)
@@ -471,7 +484,7 @@ class DriverViewModel : ViewModel() {
                 if (UniversalKernelLoader.patchVermagic(downloaded, kernel)) {
                     tlog("FIX: vermagic patched OK -> \"$kernel\"", "OK")
                 } else {
-                    tlog("FIX: vermagic patch failed (string too long) - force-load e chesta korbo", "WARN")
+                    tlog("FIX: vermagic patch failed (string too long) - will try force-load", "WARN")
                 }
             }
 
@@ -494,10 +507,10 @@ class DriverViewModel : ViewModel() {
                     errText.contains("vermagic", true) ||
                     errText.contains("Exec format error", true)
                 ) {
-                    tlog("DIAGNOSE: vermagic / module format mismatch - ei loader ei kernel e cholbe na", "WARN")
-                    tlog("ACTION: phone restart hoy ni (kichu force kora hoy ni).", "INFO")
+                    tlog("DIAGNOSE: vermagic / module format mismatch - this loader will not run on this kernel", "WARN")
+                    tlog("ACTION: phone did not restart (nothing was forced).", "INFO")
                 }
-                tlog("SUPPORT: ei kernel ($kernel) er jonno custom loader lagbe - nicher WhatsApp button chapun", "FIX")
+                tlog("SUPPORT: this kernel ($kernel) needs a custom loader - tap the WhatsApp button below", "FIX")
                 return false
             }
 
@@ -506,29 +519,29 @@ class DriverViewModel : ViewModel() {
             // ---------- REBOOT GUARD 4: post-load health check + rescue ----------
             waitForStability()
             if (SafetyGuard.kernelLooksUnstable()) {
-                tlog("SAFETY: load er por kernel unstable (panic/oops signature dhorа porlo)", "ERR")
+                tlog("SAFETY: kernel unstable after load (panic/oops signature caught)", "ERR")
                 val newMods = SafetyGuard.newlyLoaded(before)
                 if (newMods.isEmpty()) {
-                    tlog("SAFETY: notun module name paoa jay nai - /proc/modules check korun", "WARN")
+                    tlog("SAFETY: new module name not found - check /proc/modules", "WARN")
                 }
                 var rescued = false
                 newMods.forEach { mod ->
-                    tlog("RESCUE: rmmod $mod (phone restart thekano hocche)", "FIX")
+                    tlog("RESCUE: rmmod $mod (preventing phone restart)", "FIX")
                     if (SafetyGuard.rescueUnload(mod)) {
                         rescued = true
-                        tlog("RESCUE: $mod unloaded - kernel stable, phone restart hobe na", "OK")
+                        tlog("RESCUE: $mod unloaded - kernel stable, phone will not restart", "OK")
                     } else {
-                        tlog("RESCUE: rmmod $mod fail - module ta load e ache", "WARN")
+                        tlog("RESCUE: rmmod $mod failed - module is still loaded", "WARN")
                     }
                 }
                 tlog(
                     if (rescued)
-                        "RESULT: loader unsafe chilo, tai ber kore dewa hoyeche. Phone restart hoy ni."
+                        "RESULT: loader was unsafe, so it was removed. Phone did not restart."
                     else
-                        "RESULT: loader unsafe - console log ta WhatsApp e pathiye din (restart er age)",
+                        "RESULT: loader unsafe - send the console log via WhatsApp (before any restart)",
                     "WARN"
                 )
-                tlog("SUPPORT: nicher WhatsApp button theke custom loader request korun", "FIX")
+                tlog("SUPPORT: request a custom loader from the WhatsApp button below", "FIX")
                 withContext(Dispatchers.Main) {
                     autoLoadOk.value = false
                     autoLoadStatus.value = if (rescued)
@@ -538,7 +551,7 @@ class DriverViewModel : ViewModel() {
                 return false
             }
 
-            tlog("SAFETY: kernel stable - phone restart risk nai", "OK")
+            tlog("SAFETY: kernel stable - no phone restart risk", "OK")
             withContext(Dispatchers.Main) { verifyModule() }
             return true
         } finally {
@@ -768,9 +781,9 @@ class DriverViewModel : ViewModel() {
                             withContext(Dispatchers.Main) { verifyModule() }
                         } else {
                             withContext(Dispatchers.Main) {
-                                tlog("LOAD FAILED: ei .ko ei kernel e load hoy nai.", "ERR")
+                                tlog("LOAD FAILED: this .ko did not load on this kernel.", "ERR")
                                 tlog(
-                                    "SUPPORT: WhatsApp e message korun - apnar kernel er jonno custom loader banie debo: wa.me/${SupportContact.WHATSAPP_NUMBER}",
+                                    "SUPPORT: message us on WhatsApp - we will build a custom loader for your kernel: wa.me/${SupportContact.WHATSAPP_NUMBER}",
                                     "FIX"
                                 )
                             }
@@ -812,7 +825,7 @@ class DriverViewModel : ViewModel() {
                             ?: pickedName.takeIf { it.isNotEmpty() }
                             ?: entries.lastOrNull()
                     if (moduleName.isNullOrEmpty()) {
-                        tlog("UNLOAD: kono module load hoy nai - nothing to unload", "WARN")
+                        tlog("UNLOAD: no module is loaded - nothing to unload", "WARN")
                         return@withContext
                     }
 

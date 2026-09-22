@@ -9,7 +9,7 @@
     <string name="root_missing">Root: MISSING</string>
     <string name="terminal">Terminal</string>
     <string name="console">Console</string>
-    <string name="console_hint">Status console - copy kora jay</string>
+    <string name="console_hint">Status console - logs can be copied</string>
     <string name="diagnostic_log_console">Kernel Loader Console</string>
     <string name="copy_logs">Copy Logs</string>
     <string name="clear_logs">Clear Logs</string>

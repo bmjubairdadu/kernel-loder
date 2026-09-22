@@ -5,15 +5,15 @@ import com.topjohnwu.superuser.Shell
 /**
  * REBOOT GUARD
  * ============
- * Bhul / mismatch kora kernel module force-load korle kernel panic hoy -
- * phone ta nijei restart hoye jay. Ei guard shei risk ta age theke detect kore:
+ * Force-loading a wrong / mismatched kernel module causes a kernel panic -
+ * the phone restarts by itself. This guard detects that risk in advance:
  *
- *  1. FORCE-LOAD shudhu tokhon, jokhon loader er major.minor device kernel er
- *     sathe mile (5.4.147 -> 5.4.210 OK; 5.10 -> 5.4 NEVER - panic).
- *  2. dmesg e age thekei oops/panic/BUG thakle force-load bondho.
- *  3. Load er por panic signature hole module ta sathe sathe rmmod (rescue),
- *     jate reboot na hoy.
- *  4. Protita decision console e message akare show hoy.
+ *  1. FORCE-LOAD only when the loader's major.minor matches the device kernel
+ *     (5.4.147 -> 5.4.210 OK; 5.10 -> 5.4 NEVER - panic).
+ *  2. No force-load when dmesg already shows oops/panic/BUG.
+ *  3. After a load, if panic signatures appear, rmmod the module immediately
+ *     (rescue), so no reboot happens.
+ *  4. Every decision is shown in the console as a message.
  */
 object SafetyGuard {
 
@@ -83,14 +83,14 @@ object SafetyGuard {
     fun refusalLines(device: String, target: String): List<Pair<String, String>> = listOf(
         "SAFETY: force-load REFUSED - phone restart risk" to "ERR",
         "SAFETY: device kernel $device vs nearest loader $target" to "WARN",
-        "SAFETY: major.minor mile na => kernel panic hoy, tai load korchi na" to "WARN",
-        "SAFETY: WhatsApp button theke custom loader request korun (kernel $device)" to "INFO"
+        "SAFETY: major.minor mismatch => kernel panic risk, so not loading" to "WARN",
+        "SAFETY: request a custom loader from the WhatsApp button (kernel $device)" to "INFO"
     )
 
     /** Console lines shown when the guard stops a load because the kernel is sick. */
     fun unstableLines(): List<Pair<String, String>> = listOf(
-        "SAFETY: kernel already unstable (dmesg e oops/panic/call trace ache)" to "ERR",
-        "SAFETY: force-load bondho - ei obosthay load korle phone restart hobe" to "ERR",
-        "SAFETY: phone ta ekbar normal reboot korun, tarpor abar chesta korun" to "WARN"
+        "SAFETY: kernel already unstable (dmesg shows oops/panic/call trace)" to "ERR",
+        "SAFETY: force-load disabled - loading now would restart the phone" to "ERR",
+        "SAFETY: reboot the phone normally once, then try again" to "WARN"
     )
 }

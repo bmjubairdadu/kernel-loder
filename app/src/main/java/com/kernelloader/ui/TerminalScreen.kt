@@ -228,7 +228,7 @@ private fun TerminalLineRow(line: TerminalLine) {
         color = colorsByType[line.type] ?: Color(0xFFE0E0E0),
         style = MaterialTheme.typography.bodySmall.copy(
             fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp
+            fontSize = 12.sp
         ),
         modifier = Modifier.padding(vertical = 1.dp)
     )

@@ -15,8 +15,8 @@ import java.net.URL
 /**
  * In-app auto-update
  * ==================
- * App er nijer notun version GitHub Releases database theke khuje dekhe,
- * APK download kore system installer k khule dey.
+ * The app looks for its own newer version in the GitHub Releases database,
+ * downloads the APK and hands it to the system installer.
  *
  * Release format (drivers branch pipeline / manual):
  *   tag:     "v8-2.3-universal"   -> versionCode = 8

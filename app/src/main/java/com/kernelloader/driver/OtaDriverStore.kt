@@ -11,7 +11,7 @@ import java.net.URL
  * OTA DRIVER STORE
  * Tiny APK: ships with ZERO (or few fallback) .ko files.
  * Load flow: detect X.Y.Z -> fetch drivers.json -> EXACT download+load,
- * else tell user "loader nai" and offer nearest same-major force-load.
+ * else tell the user "no loader" and offer the nearest same-major force-load.
  * Single-load guard (lsmod check + lock file) prevents double-insmod reboot.
  */
 object OtaDriverStore {
@@ -26,6 +26,9 @@ object OtaDriverStore {
         "https://raw.githubusercontent.com/bmjubairdadu/kernel-loder/drivers/drivers.json"
 
     val fallbackManifestUrls: List<String> = listOf(
+        // Fast CDN mirror of the same drivers branch (used when
+        // raw.githubusercontent.com is unreachable on a network).
+        "https://cdn.jsdelivr.net/gh/bmjubairdadu/kernel-loder@drivers/drivers.json",
         "https://github.com/bmjubairdadu/kernel-loder/releases/latest/download/drivers.json"
     )
 
@@ -112,15 +115,31 @@ object OtaDriverStore {
     }
 
     fun fetchManifest(url: String = manifestUrl): Manifest? {
-        fetchOne(url)?.let { return it }
-        for (fallback in fallbackManifestUrls) {
-            if (fallback == url) continue
-            fetchOne(fallback)?.let { return it }
+        return fetchDetailed(url).first
+    }
+
+    /**
+     * Same as [fetchManifest] but also returns a human-readable failure reason
+     * (shown in the console) instead of failing silently, so a connection
+     * problem can actually be diagnosed on the device.
+     */
+    fun fetchDetailed(url: String = manifestUrl): Pair<Manifest?, String?> {
+        val urls = listOf(url) + fallbackManifestUrls.filter { it != url }
+        var lastError = "unknown error"
+        for (u in urls) {
+            val (manifest, error) = fetchOneDetailed(u)
+            if (manifest != null) return manifest to null
+            lastError = "$u -> ${error ?: "empty response"}"
         }
-        return null
+        return null to lastError
     }
 
     private fun fetchOne(url: String): Manifest? {
+        return fetchOneDetailed(url).first
+    }
+
+    /** Fetch + parse one manifest URL, keeping the exact failure reason. */
+    private fun fetchOneDetailed(url: String): Pair<Manifest?, String?> {
         return try {
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15000; readTimeout = 15000
@@ -128,12 +147,23 @@ object OtaDriverStore {
                 setRequestProperty("User-Agent", "KernelLoder-OTA/1.0")
             }
             conn.connect()
-            if (conn.responseCode !in 200..299) { conn.disconnect(); return null }
+            if (conn.responseCode !in 200..299) {
+                conn.disconnect()
+                return null to "HTTP ${conn.responseCode}"
+            }
             val text = conn.inputStream.bufferedReader().readText()
             conn.disconnect()
-            parseManifest(text)
+            val manifest = parseManifest(text)
+            if (manifest == null) null to "invalid drivers.json"
+            else manifest to null
+        } catch (e: java.net.UnknownHostException) {
+            null to "no internet / DNS blocked (${e.message})"
+        } catch (e: java.net.SocketTimeoutException) {
+            null to "connection timed out (slow network?)"
+        } catch (e: javax.net.ssl.SSLException) {
+            null to "TLS failed - check device date/time (${e.message})"
         } catch (e: Exception) {
-            null
+            null to (e.message ?: e.javaClass.simpleName)
         }
     }
 
