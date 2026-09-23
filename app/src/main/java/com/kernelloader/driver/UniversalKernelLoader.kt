@@ -368,7 +368,8 @@ object UniversalKernelLoader {
                         "[ -x \"\$BB\" ] && \$BB insmod -f $TMP_KO devname=$devNode || insmod -f $TMP_KO devname=$devNode"
             ).exec()
             if (!res.isSuccess &&
-                (res.out + res.err).joinToString("\n").contains("Unknown parameter", true)
+                ((res.out + res.err).joinToString("\n").contains("Unknown parameter", true) ||
+                 (res.out + res.err).joinToString("\n").contains("No such file", true))
             ) {
                 res = Shell.cmd(
                     "BB=\$(command -v busybox); [ -z \"\$BB\" ] && BB=/data/adb/magisk/busybox; " +
@@ -395,12 +396,16 @@ object UniversalKernelLoader {
         return res
     }
 
-    /** insmod honoring the per-load devname, with legacy fallback (no param). */
+    /** insmod honoring the per-load devname, with legacy fallback (no param).
+     * Some ROMs' insmod treats unknown `key=value` args as filenames
+     * ("No such file") instead of reporting "Unknown parameter" - so fall
+     * back to plain insmod in both cases. */
     private fun insmodRetry(devNode: String, force: Boolean = false): Shell.Result {
         val flag = if (force) "-f " else ""
         var r = Shell.cmd("insmod $flag$TMP_KO devname=$devNode").exec()
+        val err = (r.out + r.err).joinToString("\n")
         if (!r.isSuccess &&
-            (r.out + r.err).joinToString("\n").contains("Unknown parameter", true)
+            (err.contains("Unknown parameter", true) || err.contains("No such file", true))
         ) {
             r = Shell.cmd("insmod $flag$TMP_KO").exec()
         }

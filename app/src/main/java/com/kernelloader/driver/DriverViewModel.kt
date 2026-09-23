@@ -437,9 +437,12 @@ class DriverViewModel : ViewModel() {
 
             var res = Shell.cmd("insmod ${staged.absolutePath} devname=$devNode").exec()
             if (!res.isSuccess &&
-                (res.out + res.err).joinToString("\n").contains("Unknown parameter", true)
+                ((res.out + res.err).joinToString("\n").contains("Unknown parameter", true) ||
+                 (res.out + res.err).joinToString("\n").contains("No such file", true))
             ) {
-                // Legacy .ko without devname= - retry plain.
+                // Legacy .ko without devname= - or an insmod that treats
+                // key=value as a filename - retry plain.
+                tlog("INFO: retrying plain insmod (no devname=)", "WARN")
                 res = Shell.cmd("insmod ${staged.absolutePath}").exec()
             }
             res.out.forEach { if (it.isNotBlank()) tlog(it, "OUT") }
@@ -450,7 +453,8 @@ class DriverViewModel : ViewModel() {
                 tlog("FIX: insmod -f (force load) - $_forceNote", "FIX")
                 res = Shell.cmd("insmod -f ${staged.absolutePath} devname=$devNode").exec()
                 if (!res.isSuccess &&
-                    (res.out + res.err).joinToString("\n").contains("Unknown parameter", true)
+                    ((res.out + res.err).joinToString("\n").contains("Unknown parameter", true) ||
+                     (res.out + res.err).joinToString("\n").contains("No such file", true))
                 ) {
                     res = Shell.cmd("insmod -f ${staged.absolutePath}").exec()
                 }
@@ -461,6 +465,12 @@ class DriverViewModel : ViewModel() {
             if (!res.isSuccess) {
                 tlog("OTA: insmod failed (exit ${res.code})", "ERR")
                 val errText = (res.out + res.err).joinToString("\n")
+                // One-shot environment dump so the exact cause is visible.
+                Shell.cmd(
+                    "which -a insmod 2>/dev/null",
+                    "ls -l ${staged.absolutePath} 2>&1",
+                    "ls -l /data/local/tmp 2>&1 | head -n 5"
+                ).exec().out.forEach { if (it.isNotBlank()) tlog("DIAG: $it", "INFO") }
                 if (errText.contains("Invalid module format", true) ||
                     errText.contains("vermagic", true) ||
                     errText.contains("Exec format error", true)
