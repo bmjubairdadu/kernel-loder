@@ -1,13 +1,13 @@
 {
-    "updated":  "2026-09-23T09:44:05Z",
+    "updated":  "2026-09-23T09:51:39Z",
     "baseUrl":  "https://raw.githubusercontent.com/bmjubairdadu/kernel-loder/drivers",
     "drivers":  [
                     {
                         "version":  "4.9.337-DaisyForGaming",
                         "file":  "kmem_4.9.337-DaisyForGaming.ko",
-                        "sha256":  "b96d966f68b99f632497d26a0d04feee4b3f00ad80771df8eb5d751b519b1a03",
-                        "size":  16344,
-                        "buildDate":  "2026-09-23T09:44:05Z"
+                        "sha256":  "6b0f76f951a00c81dc823efe00dc004abdd163775b4dc6d3a55755f31b7036ff",
+                        "size":  16104,
+                        "buildDate":  "2026-09-23T09:51:39Z"
                     },
                     {
                         "version":  "3.19.8",
