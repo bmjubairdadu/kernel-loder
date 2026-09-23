@@ -399,15 +399,25 @@ object UniversalKernelLoader {
     /** insmod honoring the per-load devname, with legacy fallback (no param).
      * Some ROMs' insmod treats unknown `key=value` args as filenames
      * ("No such file") instead of reporting "Unknown parameter" - so fall
-     * back to plain insmod in both cases. */
+     * back to plain insmod in both cases. Tries every insmod binary. */
     private fun insmodRetry(devNode: String, force: Boolean = false): Shell.Result {
-        val flag = if (force) "-f " else ""
-        var r = Shell.cmd("insmod $flag$TMP_KO devname=$devNode").exec()
-        val err = (r.out + r.err).joinToString("\n")
-        if (!r.isSuccess &&
-            (err.contains("Unknown parameter", true) || err.contains("No such file", true))
-        ) {
-            r = Shell.cmd("insmod $flag$TMP_KO").exec()
+        val bins = listOf("/system/bin/insmod", "/vendor/bin/insmod", "insmod")
+        val forms = mutableListOf<String>()
+        for (b in bins) {
+            if (force) forms.add("$b -f $TMP_KO devname=$devNode")
+            forms.add("$b $TMP_KO devname=$devNode")
+        }
+        for (b in bins) {
+            if (force) forms.add("$b -f $TMP_KO")
+            forms.add("$b $TMP_KO")
+        }
+        var r = Shell.cmd("true").exec()
+        for (cmd in forms) {
+            r = Shell.cmd(cmd).exec()
+            if (r.isSuccess) return r
+            val err = (r.out + r.err).joinToString(" | ").take(160)
+            // Log only interesting failures; "not found" on a exotic path is noise.
+            android.util.Log.d("KernelLoder", "insmod try [$cmd] -> ${r.code} $err")
         }
         return r
     }

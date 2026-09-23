@@ -435,31 +435,29 @@ class DriverViewModel : ViewModel() {
                 }
             }
 
-            var res = Shell.cmd("insmod ${staged.absolutePath} devname=$devNode").exec()
-            if (!res.isSuccess &&
-                ((res.out + res.err).joinToString("\n").contains("Unknown parameter", true) ||
-                 (res.out + res.err).joinToString("\n").contains("No such file", true))
-            ) {
-                // Legacy .ko without devname= - or an insmod that treats
-                // key=value as a filename - retry plain.
-                tlog("INFO: retrying plain insmod (no devname=)", "WARN")
-                res = Shell.cmd("insmod ${staged.absolutePath}").exec()
-            }
-            res.out.forEach { if (it.isNotBlank()) tlog(it, "OUT") }
-            res.err.forEach { if (it.isNotBlank()) tlog(it, "ERR") }
-
-            // force-load retry (only in nearest-match mode, guard already approved it)
-            if (!res.isSuccess && force) {
-                tlog("FIX: insmod -f (force load) - $_forceNote", "FIX")
-                res = Shell.cmd("insmod -f ${staged.absolutePath} devname=$devNode").exec()
-                if (!res.isSuccess &&
-                    ((res.out + res.err).joinToString("\n").contains("Unknown parameter", true) ||
-                     (res.out + res.err).joinToString("\n").contains("No such file", true))
-                ) {
-                    res = Shell.cmd("insmod -f ${staged.absolutePath}").exec()
+            // ---------- insmod ladder: every binary x every arg form ----------
+            // This device's default insmod says "No such file" for a file
+            // that provably exists, so try explicit binaries (/system,
+            // /vendor, busybox) with and without devname= / -f, and log each.
+            val bins = listOf(
+                "/system/bin/insmod", "/vendor/bin/insmod", "insmod",
+                "/data/adb/magisk/busybox insmod", "busybox insmod"
+            )
+            val forms = mutableListOf<String>()
+            for (b in bins) {
+                forms.add("$b ${staged.absolutePath} devname=$devNode")
+                forms.add("$b ${staged.absolutePath}")
+                if (force) {
+                    forms.add("$b -f ${staged.absolutePath} devname=$devNode")
+                    forms.add("$b -f ${staged.absolutePath}")
                 }
-                res.out.forEach { if (it.isNotBlank()) tlog(it, "OUT") }
-                res.err.forEach { if (it.isNotBlank()) tlog(it, "ERR") }
+            }
+            var res = Shell.cmd("true").exec()
+            for (cmd in forms) {
+                res = Shell.cmd(cmd).exec()
+                val oneLine = (res.out + res.err).firstOrNull { it.isNotBlank() } ?: ""
+                tlog("TRY: $cmd -> exit ${res.code} $oneLine", if (res.isSuccess) "OK" else "INFO")
+                if (res.isSuccess) break
             }
 
             if (!res.isSuccess) {
@@ -467,9 +465,11 @@ class DriverViewModel : ViewModel() {
                 val errText = (res.out + res.err).joinToString("\n")
                 // One-shot environment dump so the exact cause is visible.
                 Shell.cmd(
-                    "which -a insmod 2>/dev/null",
-                    "ls -l ${staged.absolutePath} 2>&1",
-                    "ls -l /data/local/tmp 2>&1 | head -n 5"
+                    "ls -l /system/bin/insmod /vendor/bin/insmod 2>&1",
+                    "for b in /system/bin/insmod /vendor/bin/insmod; do echo \"== \$b\"; \$b 2>&1 | head -n 3; done",
+                    "cat ${staged.absolutePath} > /dev/null 2>&1 && echo READ_OK || echo READ_FAIL",
+                    "od -An -tx1 ${staged.absolutePath} 2>/dev/null | head -n 1",
+                    "dmesg 2>/dev/null | tail -n 10"
                 ).exec().out.forEach { if (it.isNotBlank()) tlog("DIAG: $it", "INFO") }
                 if (errText.contains("Invalid module format", true) ||
                     errText.contains("vermagic", true) ||
