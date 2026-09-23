@@ -20,9 +20,20 @@ import java.util.Base64
  *  3. vermagic mismatch (Exec format error / Invalid module format)
  *                                   -> binary-patch the .ko vermagic string to
  *                                      the RUNNING kernel release -> retry
- *  4. symbol/version CRC mismatch   -> busybox insmod -f (force)
- *  5. module signature enforcement  -> try sig_enforce off -> force load
+ *                                      (only when the new string fits; the full
+ *                                      `uname -r` including suffixes like -perf
+ *                                      is auto-detected and used)
+ *  4. symbol/version CRC mismatch   -> busybox insmod -f (force) BUT ONLY when
+ *                                      SafetyGuard allows it (same major.minor
+ *                                      AND kernel currently stable). Otherwise
+ *                                      the load is REFUSED so the phone never
+ *                                      restarts.
+ *  5. module signature enforcement  -> try sig_enforce off -> plain retry
+ *                                      (no forced signature bypass)
  *  6. already loaded ("File exists")-> treat as success + verify
+ *
+ * The app itself NEVER reboots the phone. Old installer .sh scripts contain
+ * `reboot` commands - do not use them; use this AUTO LOAD path instead.
  *
  * If no file was picked, it scans the embedded drivers and auto-selects the
  * best match for the running kernel.
@@ -65,8 +76,18 @@ object UniversalKernelLoader {
             vm.tlog("DEVICE: $brand $model (device name doesn't matter - universal loader)", "INFO")
         }
         vm.tlog("KERNEL: $kernel", "INFO")
+        vm.tlog("KERNEL-SHORT: ${RootChecker.kernelShortVersion(kernel)} (suffix auto-detected: full release is used for matching)", "INFO")
         vm.tlog("ARCH:   $arch", "INFO")
         vm.tlog("SELINUX: $selinux", "INFO")
+
+        // ---------- 1b. SAFETY: never force-load on top of a sick kernel ----------
+        // (OTA path already has this guard; the embedded path was missing it,
+        // which is why mismatched loads caused heat/lag/restart.)
+        if (SafetyGuard.kernelLooksUnstable()) {
+            SafetyGuard.unstableLines().forEach { vm.tlog(it.first, it.second) }
+            finish(vm, false, "Kernel already unstable - reboot once normally, then try again (nothing was loaded)")
+            return
+        }
 
         // ---------- 2. FIX: SELinux ----------
         if (selinux.equals("Enforcing", ignoreCase = true)) {
@@ -175,6 +196,12 @@ object UniversalKernelLoader {
         }
         vm.tlog("COPY: $TMP_KO OK", "OK")
 
+        // Per-load random /dev node (new kmem driver honors `devname=`;
+        // legacy drivers ignore it - we retry without the parameter then).
+        // Static node names are fingerprinted by anti-cheat, random is safer.
+        val devNode = (1..8).map { ('a'..'z').random() }.joinToString("")
+        vm.tlog("DEVNAME: /dev/$devNode (passed as devname=, fallback to driver default)", "INFO")
+
         // If vermagic mismatch, patch BEFORE first attempt (old kernels always reject mismatched vermagic)
         if (needPatch) {
             vm.tstep("Fix: patching vermagic -> $kernel")
@@ -187,19 +214,48 @@ object UniversalKernelLoader {
         }
 
         // ---------- 7. insmod with auto-fix retry ladder ----------
+        val baselineMods = SafetyGuard.loadedModuleNames()
         vm.tstep("Loading module (insmod)...")
-        vm.tlog("CMD: insmod $TMP_KO", "CMD")
-        var res = Shell.cmd("insmod $TMP_KO").exec()
+        vm.tlog("CMD: insmod $TMP_KO devname=$devNode", "CMD")
+        var res = Shell.cmd("insmod $TMP_KO devname=$devNode").exec()
+        if (!res.isSuccess &&
+            (res.out + res.err).joinToString("\n").contains("Unknown parameter", true)
+        ) {
+            // Legacy .ko without the devname parameter - retry plain.
+            vm.tlog("INFO: driver has no devname= parameter (legacy build) - retrying plain insmod", "WARN")
+            res = Shell.cmd("insmod $TMP_KO").exec()
+        }
         res.out.forEach { if (it.isNotBlank()) vm.tlog(it, "OUT") }
         res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
 
         if (!res.isSuccess) {
             val err = (res.out + res.err).joinToString("\n")
-            res = runFixLadder(vm, cacheFile, err)
+            res = runFixLadder(vm, cacheFile, err, devNode)
         }
 
-        // ---------- 8. Verify ----------
-        val ok = verifyLoad(vm, sourceName)
+        // ---------- 8. Verify + post-load stability (rescue if unsafe) ----------
+        // Wait a beat so dmesg can show an oops, then check stability.
+        // If the just-loaded module made the kernel sick, rmmod it at once
+        // so the phone does NOT restart.
+        val beforeMods = baselineMods
+        // NOTE: no sleep here - autoLoad runs on the main thread, so we check
+        // dmesg state immediately instead of blocking the UI.
+        if (SafetyGuard.kernelLooksUnstable()) {
+            vm.tlog("SAFETY: kernel unstable after load (panic/oops signature caught)", "ERR")
+            var rescued = false
+            SafetyGuard.newlyLoaded(beforeMods).forEach { mod ->
+                vm.tlog("RESCUE: rmmod $mod (preventing phone restart)", "FIX")
+                if (SafetyGuard.rescueUnload(mod)) {
+                    rescued = true
+                    vm.tlog("RESCUE: $mod unloaded - kernel stable, phone will not restart", "OK")
+                } else {
+                    vm.tlog("RESCUE: rmmod $mod failed - module is still loaded", "WARN")
+                }
+            }
+            finish(vm, false, if (rescued) "Unsafe loader removed (no restart)" else "Loader unstable - contact support")
+            return
+        }
+        val ok = verifyLoad(vm, sourceName, devNode)
         if (ok) {
             vm.tlog("==============================================", "OK")
             vm.tlog(" RESULT: DRIVER LOADED & VERIFIED", "OK")
@@ -217,11 +273,18 @@ object UniversalKernelLoader {
     /**
      * Auto-fix ladder: analyze kernel error text and apply the matching fix,
      * retrying insmod after each fix. Returns the last shell result.
+     *
+     * SAFETY: force-load is REFUSED unless SafetyGuard.canForceLoad passes
+     * (same major.minor) and the kernel is currently stable. Refusal means
+     * "no load, no restart" - never a panic.
      */
-    private fun runFixLadder(vm: DriverViewModel, cacheFile: File, originalError: String): Shell.Result {
+    private fun runFixLadder(vm: DriverViewModel, cacheFile: File, originalError: String, devNode: String): Shell.Result {
         var res = Shell.cmd("true").exec()
         var lastErr = originalError
         var attempts = 0
+        val deviceKernel = Shell.cmd("uname -r").exec().out.firstOrNull()?.trim() ?: ""
+        val koVermagic = try { readVermagic(cacheFile) } catch (e: Exception) { null }
+        val koRelease = koVermagic?.substringBefore(' ') ?: ""
 
         // --- FIX A: "File exists" -> module already loaded
         if (lastErr.contains("File exists", true) || lastErr.contains("already loaded", true)) {
@@ -239,7 +302,7 @@ object UniversalKernelLoader {
                 "setenforce 0 2>/dev/null"
             ).exec()
             vm.tlog("FIX: applied (exit ${fix.code})", if (fix.isSuccess) "OK" else "WARN")
-            res = Shell.cmd("insmod $TMP_KO").exec()
+            res = insmodRetry(devNode)
             vm.tlog("RETRY: insmod (after permission fix) -> exit ${res.code}", "CMD")
             res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
             if (res.isSuccess) return res
@@ -259,7 +322,7 @@ object UniversalKernelLoader {
             if (kernel.isNotEmpty() && patchVermagic(cacheFile, kernel)) {
                 vm.tlog("FIX: vermagic patched -> \"$kernel\"", "OK")
                 Shell.cmd("cp \"${cacheFile.absolutePath}\" $TMP_KO", "chmod 644 $TMP_KO").exec()
-                res = Shell.cmd("insmod $TMP_KO").exec()
+                res = insmodRetry(devNode)
                 vm.tlog("RETRY: insmod (after vermagic patch) -> exit ${res.code}", "CMD")
                 res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
                 if (res.isSuccess) return res
@@ -271,6 +334,8 @@ object UniversalKernelLoader {
         }
 
         // --- FIX D: symbol / CRC / signature issues -> force load via busybox
+        // GATED: same-major.minor only, stable kernel only. Otherwise refuse
+        // (a cross-series or sick-kernel force-load is what reboots phones).
         if (lastErr.contains("Unknown symbol", true) ||
             lastErr.contains("disagrees about version", true) ||
             lastErr.contains("module_layout", true) ||
@@ -280,12 +345,36 @@ object UniversalKernelLoader {
             lastErr.contains("Operation not permitted", true) ||
             attempts > 0
         ) {
+            if (deviceKernel.isNotEmpty() && koRelease.isNotEmpty() &&
+                !SafetyGuard.canForceLoad(deviceKernel, koRelease)
+            ) {
+                SafetyGuard.refusalLines(deviceKernel, koRelease).forEach { vm.tlog(it.first, it.second) }
+                vm.tlog("ACTION: nothing was force-loaded, phone will not restart.", "INFO")
+                return res
+            }
+            if (SafetyGuard.kernelLooksUnstable()) {
+                SafetyGuard.unstableLines().forEach { vm.tlog(it.first, it.second) }
+                return res
+            }
+            if (lastErr.contains("Required key not available", true) || lastErr.contains("Key was rejected", true)) {
+                vm.tlog("DIAGNOSE: kernel enforces module signatures - force-load refused (would fail / risk panic)", "ERR")
+                vm.tlog("ACTION: this kernel ($deviceKernel) needs a signed/custom-built loader - contact support", "FIX")
+                return res
+            }
             vm.tstep("Fix: force-load (busybox insmod -f)...")
             vm.tlog("FIX: force-load via busybox insmod -f (bypasses vermagic/CRC/sign checks)", "FIX")
             res = Shell.cmd(
                 "BB=\$(command -v busybox); [ -z \"\$BB\" ] && BB=/data/adb/magisk/busybox; " +
-                        "[ -x \"\$BB\" ] && \$BB insmod -f $TMP_KO || insmod -f $TMP_KO"
+                        "[ -x \"\$BB\" ] && \$BB insmod -f $TMP_KO devname=$devNode || insmod -f $TMP_KO devname=$devNode"
             ).exec()
+            if (!res.isSuccess &&
+                (res.out + res.err).joinToString("\n").contains("Unknown parameter", true)
+            ) {
+                res = Shell.cmd(
+                    "BB=\$(command -v busybox); [ -z \"\$BB\" ] && BB=/data/adb/magisk/busybox; " +
+                            "[ -x \"\$BB\" ] && \$BB insmod -f $TMP_KO || insmod -f $TMP_KO"
+                ).exec()
+            }
             vm.tlog("RETRY: insmod -f (force) -> exit ${res.code}", "CMD")
             res.out.forEach { if (it.isNotBlank()) vm.tlog(it, "OUT") }
             res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
@@ -298,7 +387,7 @@ object UniversalKernelLoader {
             vm.tstep("Fix: module signature enforcement...")
             vm.tlog("FIX: kernel rejected module signature -> sig_enforce off", "FIX")
             Shell.cmd("echo 0 > /sys/module/module/parameters/sig_enforce 2>/dev/null").exec()
-            res = Shell.cmd("insmod $TMP_KO").exec()
+            res = insmodRetry(devNode)
             vm.tlog("RETRY: insmod (after sig_enforce off) -> exit ${res.code}", "CMD")
             if (res.isSuccess) return res
         }
@@ -306,8 +395,20 @@ object UniversalKernelLoader {
         return res
     }
 
+    /** insmod honoring the per-load devname, with legacy fallback (no param). */
+    private fun insmodRetry(devNode: String, force: Boolean = false): Shell.Result {
+        val flag = if (force) "-f " else ""
+        var r = Shell.cmd("insmod $flag$TMP_KO devname=$devNode").exec()
+        if (!r.isSuccess &&
+            (r.out + r.err).joinToString("\n").contains("Unknown parameter", true)
+        ) {
+            r = Shell.cmd("insmod $flag$TMP_KO").exec()
+        }
+        return r
+    }
+
     /** Post-load verification: lsmod + any /dev node from the module + dmesg */
-    private fun verifyLoad(vm: DriverViewModel, sourceName: String): Boolean {
+    private fun verifyLoad(vm: DriverViewModel, sourceName: String, expectedNode: String = ""): Boolean {
         vm.tstep("Verifying module...")
         val lsmod = Shell.cmd("lsmod").exec()
         // Find the module in lsmod by tokens of the source file name (a module's
@@ -321,11 +422,17 @@ object UniversalKernelLoader {
         val moduleLoaded = loadedLine != null
         val loadedName = loadedLine?.trim()?.split(Regex("\\s+"))?.firstOrNull() ?: ""
         // The module itself chooses its /dev node name - match it, then fall back
-        // to the tags our bundled drivers use.
+        // to the tags our bundled drivers use. The per-load random devname
+        // (new kmem driver) is checked explicitly first.
         val devList = Shell.cmd("ls /dev 2>/dev/null").exec().out
+        if (expectedNode.isNotEmpty() && devList.any { it.trim() == expectedNode }) {
+            vm.tlog("VERIFY: /dev node -> FOUND (/dev/$expectedNode, per-load name)", "OK")
+        }
         val devMatches = devList.filter { node ->
             (loadedName.isNotEmpty() && node.contains(loadedName, true)) ||
-                    node.contains("kloader", true) || node.contains("daisy", true)
+                    (expectedNode.isNotEmpty() && node.contains(expectedNode, true)) ||
+                    node.contains("kloader", true) || node.contains("daisy", true) ||
+                    node.contains("entryi", true)
         }
         val devExists = devMatches.isNotEmpty()
         val dmesg = Shell.cmd("dmesg | tail -n 15").exec()
@@ -497,7 +604,12 @@ object UniversalKernelLoader {
                 // Exact X.Y.Z match - kernel NAME irrelevant, only numbers count.
                 // Same-release UNI module is the cross-device pick (1200 + 60):
                 // a Daisy NATIVE module only overtakes it on a real Daisy kernel.
+                // FULL-release exact match (e.g. 4.9.337-perf-g1234 vs itself)
+                // is even better: no vermagic patch needed at all.
                 s = 1200
+                if (realRelease == kernelRelease) s = 1500
+            } else if (realRelease == kernelRelease) {
+                s = 1500
             } else if (d.version == kernelRelease) {
                 s = 1000
             } else if (kernelRelease.startsWith(d.version)) {
