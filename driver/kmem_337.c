@@ -463,8 +463,8 @@ static int __init kmem_init(void)
 		goto err_class;
 	}
 
-	/* hide from sysfs listing (legacy behavior), /dev node stays usable */
-	kobject_del(&char_device->kobj);
+	/* NOTE: no kobject_del hiding here - removing a live device kobject
+	 * risks use-after-free panics on some trees. /dev node stays usable. */
 
 	pr_info("kmem: /dev/%s created (major %d). ready.\n",
 		devname, MAJOR(dev_number));

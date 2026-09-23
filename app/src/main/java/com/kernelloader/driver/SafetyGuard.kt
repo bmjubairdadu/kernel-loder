@@ -67,12 +67,13 @@ object SafetyGuard {
 
     /**
      * RESCUE: unload a module that loaded but behaves badly, so the kernel does
-     * not panic (=> phone does not reboot). Returns true when it was removed.
+     * not panic (=> phone does not reboot). Plain rmmod only - a forced unload
+     * of a live module can itself panic the kernel. Returns true when removed.
      */
     fun rescueUnload(moduleName: String): Boolean {
         if (moduleName.isBlank()) return false
         return try {
-            Shell.cmd("rmmod -f $moduleName 2>/dev/null || rmmod $moduleName 2>/dev/null")
+            Shell.cmd("rmmod $moduleName 2>/dev/null")
                 .exec().isSuccess
         } catch (e: Exception) {
             false

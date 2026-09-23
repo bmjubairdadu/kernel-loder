@@ -293,10 +293,11 @@ object UniversalKernelLoader {
         // state - the app never reboots by itself.
         if (lastErr.contains("File exists", true) || lastErr.contains("already loaded", true)) {
             vm.tlog("DIAGNOSE: module name already present in kernel - cleaning stale state", "WARN")
+            // Plain rmmod ONLY: forced unload of a stuck module can panic
+            // the kernel (instant reboot). If plain fails, a normal user
+            // reboot clears it - the app never forces anything.
             val unload = Shell.cmd(
-                "rmmod kmem_337 2>/dev/null",
-                "BB=\$(command -v busybox); [ -z \"\$BB\" ] && BB=/data/adb/magisk/busybox; " +
-                        "[ -x \"\$BB\" ] && \$BB rmmod -f kmem_337 2>/dev/null; rmmod -f kmem_337 2>/dev/null",
+                "rmmod kmem_337 2>&1",
                 "sleep 2",
                 "lsmod 2>/dev/null | grep -i kmem || echo KLMEM_NONE"
             ).exec()
