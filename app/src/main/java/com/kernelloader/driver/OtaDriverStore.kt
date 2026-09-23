@@ -174,17 +174,23 @@ object OtaDriverStore {
             val arr = obj.optJSONArray("drivers") ?: return null
             val drivers = mutableListOf<DriverEntry>()
             for (i in 0 until arr.length()) {
-                val d = arr.getJSONObject(i)
+                // Skip malformed entries instead of killing the whole
+                // database (one bad entry used to break all 90+ drivers).
+                val d = arr.optJSONObject(i) ?: continue
+                val version = d.optString("version", "")
+                val file = d.optString("file", "")
+                if (version.isEmpty() || file.isEmpty()) continue
                 drivers.add(
                     DriverEntry(
-                        version = d.optString("version", ""),
-                        file = d.optString("file", ""),
+                        version = version,
+                        file = file,
                         sha256 = d.optString("sha256", ""),
                         size = d.optLong("size", 0L),
                         buildDate = d.optString("buildDate", "")
                     )
                 )
             }
+            if (drivers.isEmpty()) return null
             Manifest(
                 updated = obj.optString("updated", ""),
                 baseUrl = obj.optString("baseUrl", ""),
