@@ -44,10 +44,6 @@
 #define CMD_PROC_READ		0x801
 #define CMD_PROC_WRITE		0x802
 #define CMD_MOD_BASE		0x803
-#define CMD_NOOP		0x804
-#define CMD_HANDSHAKE		0x805
-
-#define HANDSHAKE_MAGIC		666
 #define CHUNK			1024
 
 static char *devname = DRV_DEFAULT_NAME;
@@ -310,7 +306,7 @@ static u64 get_module_base(s32 pid, const char *name)
 		return 0;
 
 	for (vma = mm->mmap; vma; vma = vma->vm_next) {
-		char *b;
+		char *b, *p;
 		size_t i = 0, nl = 0;
 
 		if (!vma->vm_file)
@@ -319,13 +315,16 @@ static u64 get_module_base(s32 pid, const char *name)
 			;
 		nl = i;
 		memset(modpath, 0, sizeof(modpath));
-		if (IS_ERR(file_path(vma->vm_file, modpath, sizeof(modpath))))
+		/* d_path writes at the END of the buffer and returns a pointer
+		 * to it - the buffer start itself stays empty. */
+		p = file_path(vma->vm_file, modpath, sizeof(modpath));
+		if (IS_ERR(p))
 			continue;
-		for (i = 0; modpath[i]; i++)
+		for (i = 0; p[i]; i++)
 			;
 		if (i < nl + 1)
 			continue;
-		b = modpath + i - nl;
+		b = p + i - nl;
 		if (*(b - 1) != '/')
 			continue;
 		for (i = 0; i < nl; i++) {
@@ -352,73 +351,59 @@ static int dispatch_close(struct inode *inode, struct file *file)
 }
 
 /*
- * Legacy return convention (kept for userspace compatibility):
- *   success -> -1,  helper failure -> 0,  handshake -> 2
+ * Return convention (mirrors the RT driver byte-for-byte - the client
+ * checks these exact values):
+ *   read/write helper OK -> -5,  helper failure -> 0
+ *   modbase              -> 0 (base field carries the result, may be 0)
+ *   bad user pointer     -> -14 (-EFAULT)
+ *   unknown ioctl number -> -22 (-EINVAL), including 0x804/0x805
  */
 static long dispatch_ioctl(struct file *file, unsigned int cmd, ulong arg)
 {
-	if (cmd < CMD_PROC_READ || cmd > CMD_HANDSHAKE)
-		return -1;
+	if (cmd < CMD_PROC_READ || cmd > CMD_MOD_BASE)
+		return -22;
 
 	switch (cmd) {
 	case CMD_PROC_READ: {
 		struct proc_rw k;
 		if (!access_ok(VERIFY_READ, (void __user *)arg, sizeof(k)))
-			return -1;
+			return -14;
 		if (copy_from_user(&k, (void __user *)arg, sizeof(k)))
-			return -1;
-		return read_process_memory(k.pid, k.addr, k.buf, k.size) ? 0 : -1;
+			return -14;
+		return read_process_memory(k.pid, k.addr, k.buf, k.size) ? 0 : -5;
 	}
 	case CMD_PROC_WRITE: {
 		struct proc_rw k;
 		if (!access_ok(VERIFY_READ, (void __user *)arg, sizeof(k)))
-			return -1;
+			return -14;
 		if (copy_from_user(&k, (void __user *)arg, sizeof(k)))
-			return -1;
-		return write_process_memory(k.pid, k.addr, k.buf, k.size) ? 0 : -1;
+			return -14;
+		return write_process_memory(k.pid, k.addr, k.buf, k.size) ? 0 : -5;
 	}
 	case CMD_MOD_BASE: {
 		struct modbase k;
 		if (!access_ok(VERIFY_READ, (void __user *)arg, sizeof(k)))
-			return -1;
+			return -14;
 		if (copy_from_user(&k, (void __user *)arg, sizeof(k)))
-			return -1;
+			return -14;
 		if (!access_ok(VERIFY_READ, (void __user *)(uintptr_t)k.name_ptr,
 			       sizeof(modname)))
-			return -1;
+			return -14;
 		memset(modname, 0, sizeof(modname));
 		if (copy_from_user(modname,
 				   (void __user *)(uintptr_t)k.name_ptr,
 				   sizeof(modname) - 1))
-			return -1;
+			return -14;
 		k.base = get_module_base(k.pid, modname);
 		if (!access_ok(VERIFY_WRITE, (void __user *)arg, sizeof(k)))
-			return -1;
+			return -14;
 		if (copy_to_user((void __user *)arg, &k, sizeof(k)))
-			return -1;
-		return -1;
-	}
-	case CMD_NOOP:
+			return -14;
 		return 0;
-	case CMD_HANDSHAKE: {
-		u8 k[32];
-		u32 magic = HANDSHAKE_MAGIC;
-		size_t i;
-
-		if (!access_ok(VERIFY_READ, (void __user *)arg, sizeof(k)))
-			return -1;
-		if (copy_from_user(k, (void __user *)arg, sizeof(k)))
-			return -1;
-		for (i = 0; i < sizeof(magic); i++)
-			k[i] = ((u8 *)&magic)[i];
-		if (!access_ok(VERIFY_WRITE, (void __user *)arg, sizeof(k)))
-			return -1;
-		if (copy_to_user((void __user *)arg, k, sizeof(k)))
-			return -1;
-		return 2;
 	}
+	default:
+		return -22;
 	}
-	return -1;
 }
 
 static const struct file_operations dispatch_fops = {
@@ -436,6 +421,15 @@ static dev_t dev_number;
 static struct cdev char_dev;
 static struct class *char_class;
 static struct device *char_device;
+
+/* world-readable/writable node: game tools may open it from contexts
+ * that cannot use root-only 0600 nodes (with SELinux permissive). */
+static char *kmem_devnode(struct device *dev, umode_t *mode)
+{
+	if (mode)
+		*mode = 0666;
+	return NULL;
+}
 
 static int __init kmem_init(void)
 {
@@ -456,6 +450,7 @@ static int __init kmem_init(void)
 		ret = PTR_ERR(char_class);
 		goto err_cdev;
 	}
+	char_class->devnode = kmem_devnode;
 
 	char_device = device_create(char_class, NULL, dev_number, NULL, devname);
 	if (IS_ERR(char_device)) {

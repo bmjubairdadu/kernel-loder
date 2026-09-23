@@ -504,6 +504,8 @@ class DriverViewModel : ViewModel() {
             }
 
             tlog("OTA: insmod OK (exit ${res.code})", "OK")
+            // ueventd resets fresh nodes to 0600 root - force world R/W.
+            Shell.cmd("chmod 666 /dev/$devNode 2>/dev/null").exec()
 
             // ---------- REBOOT GUARD 4: post-load health check + rescue ----------
             waitForStability()

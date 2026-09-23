@@ -466,6 +466,11 @@ object UniversalKernelLoader {
         // to the tags our bundled drivers use. The per-load random devname
         // (new kmem driver) is checked explicitly first.
         val devList = Shell.cmd("ls /dev 2>/dev/null").exec().out
+        if (expectedNode.isNotEmpty()) {
+            // ueventd resets fresh nodes to 0600 root - force world R/W so
+            // game tools (any uid, permissive SELinux) can open it.
+            Shell.cmd("chmod 666 /dev/$expectedNode 2>/dev/null").exec()
+        }
         if (expectedNode.isNotEmpty() && devList.any { it.trim() == expectedNode }) {
             vm.tlog("VERIFY: /dev node -> FOUND (/dev/$expectedNode, per-load name)", "OK")
         }

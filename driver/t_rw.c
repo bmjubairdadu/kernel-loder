@@ -1,6 +1,7 @@
 /* t_rw - freestanding ioctl test for kmem_337 (aarch64, -nostdlib -static)
  * usage: t_rw /dev/<node>   ; exit code = number of failed checks (0 = all pass)
- * checks: 0x805 handshake, 0x804 noop, 0x803 modbase, 0x801 self-read, 0x802 self-write
+ * RT return conventions: read/write ok=-5 fail=0, modbase ok=0,
+ * bad ptr=-14, unknown cmd=-22
  */
 typedef unsigned long u64;
 typedef long s64;
@@ -101,27 +102,27 @@ long tmain(long argc, char **argv)
 	putstr("open ok\n");
 	pid = sc1(SYS_getpid, 0);
 
-	/* 0x805 handshake */
+	/* 0x805 undefined on RT ABI -> -22 */
 	{
 		int i;
 		for (i = 0; i < 32; i++)
 			tmpbuf[i] = 0;
 		r = sc3(SYS_ioctl, fd, 0x805, (long)tmpbuf);
-		if (r == 2 && *(u32 *)tmpbuf == 666)
-			putstr("PASS handshake\n");
+		if (r == (long)-22)
+			putstr("PASS invalid-cmd\n");
 		else {
-			putstr("FAIL handshake ret=");
+			putstr("FAIL invalid-cmd ret=");
 			puthex((u64)r);
 			fails++;
 		}
 	}
 
-	/* 0x804 noop */
+	/* 0x804 undefined on RT ABI -> -22 */
 	r = sc3(SYS_ioctl, fd, 0x804, 0);
-	if (r == 0)
-		putstr("PASS noop\n");
+	if (r == (long)-22)
+		putstr("PASS invalid-cmd2\n");
 	else {
-		putstr("FAIL noop\n");
+		putstr("FAIL invalid-cmd2\n");
 		fails++;
 	}
 
@@ -134,7 +135,7 @@ long tmain(long argc, char **argv)
 	mb.name_ptr = (u64)&namebuf[2048];
 	mb.base = 0;
 	r = sc3(SYS_ioctl, fd, 0x803, (long)&mb);
-	if (r == (long)-1 && mb.base != 0) {
+	if (r == 0 && mb.base != 0) {
 		putstr("PASS modbase base=");
 		puthex(mb.base);
 	} else {
@@ -150,7 +151,7 @@ long tmain(long argc, char **argv)
 	pr.size = 4;
 	tmpbuf[0] = tmpbuf[1] = tmpbuf[2] = tmpbuf[3] = 0;
 	r = sc3(SYS_ioctl, fd, 0x801, (long)&pr);
-	if (r == (long)-1 && *(u32 *)tmpbuf == 0x12345678)
+	if (r == (long)-5 && *(u32 *)tmpbuf == 0x12345678)
 		putstr("PASS read\n");
 	else {
 		putstr("FAIL read got=");
@@ -162,7 +163,7 @@ long tmain(long argc, char **argv)
 	*(u32 *)tmpbuf = 0xAABBCCDD;
 	pr.buf = (u64)tmpbuf;
 	r = sc3(SYS_ioctl, fd, 0x802, (long)&pr);
-	if (r == (long)-1 && marker == 0xAABBCCDD)
+	if (r == (long)-5 && marker == 0xAABBCCDD)
 		putstr("PASS write\n");
 	else {
 		putstr("FAIL write marker=");
