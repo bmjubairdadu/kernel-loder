@@ -15,8 +15,8 @@ android {
         applicationId = "com.kernelloader"
         minSdk = 28
         targetSdk = 34
-        versionCode = 9
-        versionName = "2.4-universal"
+        versionCode = 10
+        versionName = "2.5-universal"
 
         // In-app auto-update sources (GitHub Releases database)
         buildConfigField(
@@ -72,7 +72,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.navigation3)
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.libsu.core)
