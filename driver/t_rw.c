@@ -12,6 +12,7 @@ typedef unsigned char u8;
 #define AT_FDCWD (-100)
 #define O_RDWR 2
 #define SYS_openat 56
+#define SYS_readlinkat 78
 #define SYS_ioctl 29
 #define SYS_getpid 172
 #define SYS_write 64
@@ -35,6 +36,16 @@ static long sc6(long n, long a, long b, long c, long d, long e, long f)
 
 static long sc1(long n, long a) { return sc6(n, a, 0, 0, 0, 0, 0); }
 static long sc3(long n, long a, long b, long c) { return sc6(n, a, b, c, 0, 0, 0); }
+
+/* freestanding: clang may emit memcpy for copies (no libc here) */
+void *memcpy(void *d, const void *s, u64 n)
+{
+	u8 *a = (u8 *)d;
+	const u8 *b = (const u8 *)s;
+	while (n--)
+		*a++ = *b++;
+	return d;
+}
 
 static void putstr(const char *s)
 {
@@ -126,21 +137,37 @@ long tmain(long argc, char **argv)
 		fails++;
 	}
 
-	/* 0x803 modbase of self (name placed mid-buffer so the 256B
-	 * access_ok range can never straddle a page edge) */
-	namebuf[2048] = 't'; namebuf[2049] = '_';
-	namebuf[2050] = 'r'; namebuf[2051] = 'w'; namebuf[2052] = 0;
-	mb.pid = (s32)pid;
-	mb.pad = 0;
-	mb.name_ptr = (u64)&namebuf[2048];
-	mb.base = 0;
-	r = sc3(SYS_ioctl, fd, 0x803, (long)&mb);
-	if (r == 0 && mb.base != 0) {
-		putstr("PASS modbase base=");
-		puthex(mb.base);
-	} else {
-		putstr("FAIL modbase\n");
-		fails++;
+	/* 0x803 modbase of self: discover own basename via /proc/self/exe
+	 * (the binary may be staged under any name, e.g. kprobe_xxx). */
+	{
+		static char exepath[256];
+		long rl, i, start = 0;
+		rl = sc6(SYS_readlinkat, AT_FDCWD, (long)"/proc/self/exe",
+			 (long)exepath, 255, 0, 0);
+		if (rl <= 0 || rl >= 255) {
+			putstr("FAIL modbase\n");
+			fails++;
+		} else {
+			exepath[rl] = 0;
+			for (i = 0; i < rl; i++)
+				if (exepath[i] == '/')
+					start = i + 1;
+			for (i = 0; start + i < rl && i < 200; i++)
+				namebuf[2048 + i] = exepath[start + i];
+			namebuf[2048 + i] = 0;
+			mb.pid = (s32)pid;
+			mb.pad = 0;
+			mb.name_ptr = (u64)&namebuf[2048];
+			mb.base = 0;
+			r = sc3(SYS_ioctl, fd, 0x803, (long)&mb);
+			if (r == 0 && mb.base != 0) {
+				putstr("PASS modbase base=");
+				puthex(mb.base);
+			} else {
+				putstr("FAIL modbase\n");
+				fails++;
+			}
+		}
 	}
 
 	/* 0x801 read own marker */

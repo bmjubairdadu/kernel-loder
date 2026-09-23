@@ -427,6 +427,9 @@ class DriverViewModel : ViewModel() {
                 return false
             }
             tlog("OTA: staged ${staged.absolutePath} (/dev/$devNode)", "OK")
+            // Stale cleanup first: a leftover module from an earlier boot
+            // session answers "File exists" to every insmod.
+            Shell.cmd("rmmod kmem_337 2>/dev/null", "sleep 1").exec()
             try {
 
             // ---------- REBOOT GUARD 3: baseline of loaded modules ----------
