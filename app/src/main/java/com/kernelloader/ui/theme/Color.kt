@@ -34,5 +34,5 @@ val OnTertiaryDark = Color(0xFF073543)
 val TertiaryContainerDark = Color(0xFF244B5A)
 val OnTertiaryContainerDark = Color(0xFFC1E8FB)
 
-val BackgroundDark = Color(0xFF191C1A)
-val SurfaceDark = Color(0xFF191C1A)
+val BackgroundDark = Color(0xFF0B1220)
+val SurfaceDark = Color(0xFF111C26)

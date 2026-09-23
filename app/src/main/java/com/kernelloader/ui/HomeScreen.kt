@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +17,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import android.content.Intent
 import android.net.Uri
@@ -126,9 +129,12 @@ fun HomeScreen(
     val exact = manifest?.let { OtaDriverStore.exactFor(it, kernelRelease) }
     val supported = manifest?.let { OtaDriverStore.supportedEntries(it) } ?: emptyList()
 
+    AppBackground {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
             .verticalScroll(scroll)
             .padding(horizontal = 14.dp)
     ) {
@@ -139,7 +145,14 @@ fun HomeScreen(
             Image(
                 painter = painterResource(id = R.drawable.app_logo),
                 contentDescription = "Kernel Loder logo",
-                modifier = Modifier.size(46.dp).clip(CircleShape),
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .border(
+                        1.5.dp,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                        CircleShape
+                    ),
                 contentScale = ContentScale.Crop
             )
             Spacer(Modifier.width(10.dp))
@@ -310,7 +323,7 @@ fun HomeScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(modifier = Modifier.size(230.dp), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.size(216.dp), contentAlignment = Alignment.Center) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val stroke = Stroke(width = 7.dp.toPx(), cap = StrokeCap.Round)
                     val diameter = size.minDimension - stroke.width
@@ -339,7 +352,7 @@ fun HomeScreen(
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     ),
-                    modifier = Modifier.size(160.dp).scale(pulse)
+                    modifier = Modifier.size(152.dp).scale(pulse)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         if (busy) {
@@ -571,6 +584,7 @@ fun HomeScreen(
         // ---------------- support: custom loader via WhatsApp ----------------
         SupportCard(kernelRelease = kernelRelease, loadFailed = autoOk == false)
     }
+    }
 }
 
 /**
@@ -676,7 +690,8 @@ private fun StatusChip(text: String, ok: Boolean, modifier: Modifier = Modifier)
             text = text,
             style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
         )
     }
 }

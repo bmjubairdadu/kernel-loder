@@ -16,7 +16,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,44 +26,15 @@ import java.util.Locale
  * This app loads a kernel module (.ko) on ANY rooted device.
  *
  * How it works:
- * 1. User presses "Load Kernel" button
+ * 1. User presses the LOAD button
  * 2. App detects running kernel version (uname -r)
- * 3. Scans assets/drivers/ for a matching .ko file
- * 4. If match found → loads it via insmod through root shell
- * 5. If no match → shows message in console to import .ko
- * 6. Every step is printed in Kernel Loder Console (copyable)
- *
- * Currently bundled: native_4.9.337.ko (universal build)
- * More .ko files can be added to assets/drivers/ - app auto-detects them.
- *
- * Naming convention (prefix is only a hint):
- *   native_<x.y.z>.ko → build for that kernel release (universal)
+ * 3. OTA: exact-match .ko is downloaded from the GitHub driver database
+ *    (fallback: best embedded match in assets/drivers/ + vermagic auto-patch)
+ * 4. Module is loaded via insmod through the root shell (+ auto-fix ladder)
+ * 5. Every step is printed in the Kernel Loder console (copyable)
  */
 object EmbeddedDrivers {
-    /**
-     * Known good kernel releases we bundle builds for. Informational only -
-     * the live list is produced by scanning assets/drivers.
-     */
-    val bundledVersions = listOf(
-        "4.9.186", "4.9.186b", "4.9.186c",
-        "4.9.307", "4.9.337",
-        "4.14.117", "4.14.180", "4.14.186", "4.14.186b", "4.14.186c",
-        "4.19.81", "4.19.113", "4.19.113b", "4.19.157", "4.19.157b",
-        "4.19.157c", "4.19.191",
-        "5.1.1", "5.4", "5.4.61", "5.4.86", "5.4.147", "5.4.210", "5.4c",
-        "5.10", "5.10b", "5.10-Pixel-A13",
-        "5.15", "5.15b",
-        "6.1", "6.6"
-    )
-
-    // Legacy aliases (kept so any older call site still compiles).
-    val q058Versions: List<String> get() = bundledVersions
-    val rtVersions: List<String> get() = bundledVersions
-
     // Asset path helpers
-    fun nativeFilename(kernelRelease: String): String = "drivers/native_${kernelRelease}.ko"
-    fun qxFilename(version: String): String = "drivers/qx_${version}.ko"
-    fun rtFilename(version: String): String = "drivers/rt_${version}.ko"
 
     /**
      * Returns list of available embedded drivers with their versions.
@@ -137,35 +107,6 @@ object EmbeddedDrivers {
         "RT" -> 3
         else -> 4
     }
-
-    private fun assetExists(context: Context, assetPath: String): Boolean {
-        return try {
-            context.resources.assets.open(assetPath).use { true }
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    /**
-     * Extract embedded .ko from assets to a temp file
-     * The embedded .ko files are raw ELF binaries (QX) or base64-encoded (RT)
-     * Both are already decoded in the extraction script
-     */
-    fun extractToTemp(context: Context, assetPath: String, tempName: String): File? {
-        return try {
-            val tempFile = File(context.cacheDir, tempName)
-            context.resources.assets.open(assetPath).use { inputStream ->
-                FileOutputStream(tempFile).use { outputStream ->
-                    inputStream.copyTo(outputStream)
-                }
-            }
-            tempFile.setExecutable(true)
-            tempFile
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
 }
 
 data class DriverInfo(
@@ -175,23 +116,6 @@ data class DriverInfo(
     val displayName: String,
     val description: String
 )
-
-enum class DriverType(val displayName: String) {
-    NATIVE("Native build"),
-    QX("QX (legacy)"),
-    RT("RT (legacy)"),
-    ANY("Any kernel module")
-}
-
-data class DriverLoadResult(
-    val success: Boolean,
-    val driverName: String,
-    val exitCode: Int,
-    val stdout: List<String>,
-    val stderr: List<String>,
-    val tempFile: File?
-)
-
 
 data class LogEntry(
     val timestamp: String,
@@ -452,7 +376,6 @@ class DriverViewModel : ViewModel() {
         entry: OtaDriverStore.DriverEntry,
         force: Boolean = false
     ): Boolean {
-        val tmp = File(context.cacheDir, "ota_${entry.file.substringAfterLast('/')}.ko")
         val downloaded = OtaDriverStore.downloadDriver(
             context = context,
             baseUrl = manifest.baseUrl,
@@ -467,6 +390,25 @@ class DriverViewModel : ViewModel() {
 
             val kernel = RootChecker.getKernelRelease() ?: return false
             tlog("OTA: loading ${downloaded.name} ($kernel)...", "INFO")
+
+            // ---------- STAGING: app-private files/ is not openable by insmod
+            // on many ROMs ("No such file or directory" even though the file
+            // exists). Stage to /data/local/tmp like the embedded path. ------
+            val staged = File("/data/local/tmp/kloader_ota.ko")
+            val devNode = (1..8).map { ('a'..'z').random() }.joinToString("")
+            Shell.cmd(
+                "cp \"${downloaded.absolutePath}\" ${staged.absolutePath}",
+                "chmod 644 ${staged.absolutePath}",
+                "chown root:root ${staged.absolutePath} 2>/dev/null",
+                "chcon u:object_r:system_file:s0 ${staged.absolutePath} 2>/dev/null",
+                "setenforce 0 2>/dev/null"
+            ).exec()
+            if (!Shell.cmd("test -f ${staged.absolutePath}").exec().isSuccess) {
+                tlog("OTA: staging to /data/local/tmp failed - cannot load", "ERR")
+                return false
+            }
+            tlog("OTA: staged ${staged.absolutePath} (/dev/$devNode)", "OK")
+            try {
 
             // ---------- REBOOT GUARD 3: baseline of loaded modules ----------
             val before = SafetyGuard.loadedModuleNames()
@@ -483,19 +425,35 @@ class DriverViewModel : ViewModel() {
                 tlog("FIX: vermagic \"$vermagic\" != device \"$kernel\" - patching", "FIX")
                 if (UniversalKernelLoader.patchVermagic(downloaded, kernel)) {
                     tlog("FIX: vermagic patched OK -> \"$kernel\"", "OK")
+                    // Re-stage: insmod runs from the staged copy, not the download.
+                    Shell.cmd(
+                        "cp \"${downloaded.absolutePath}\" ${staged.absolutePath}",
+                        "chmod 644 ${staged.absolutePath}"
+                    ).exec()
                 } else {
                     tlog("FIX: vermagic patch failed (string too long) - will try force-load", "WARN")
                 }
             }
 
-            var res = Shell.cmd("insmod ${downloaded.absolutePath}").exec()
+            var res = Shell.cmd("insmod ${staged.absolutePath} devname=$devNode").exec()
+            if (!res.isSuccess &&
+                (res.out + res.err).joinToString("\n").contains("Unknown parameter", true)
+            ) {
+                // Legacy .ko without devname= - retry plain.
+                res = Shell.cmd("insmod ${staged.absolutePath}").exec()
+            }
             res.out.forEach { if (it.isNotBlank()) tlog(it, "OUT") }
             res.err.forEach { if (it.isNotBlank()) tlog(it, "ERR") }
 
             // force-load retry (only in nearest-match mode, guard already approved it)
             if (!res.isSuccess && force) {
                 tlog("FIX: insmod -f (force load) - $_forceNote", "FIX")
-                res = Shell.cmd("insmod -f ${downloaded.absolutePath}").exec()
+                res = Shell.cmd("insmod -f ${staged.absolutePath} devname=$devNode").exec()
+                if (!res.isSuccess &&
+                    (res.out + res.err).joinToString("\n").contains("Unknown parameter", true)
+                ) {
+                    res = Shell.cmd("insmod -f ${staged.absolutePath}").exec()
+                }
                 res.out.forEach { if (it.isNotBlank()) tlog(it, "OUT") }
                 res.err.forEach { if (it.isNotBlank()) tlog(it, "ERR") }
             }
@@ -509,6 +467,8 @@ class DriverViewModel : ViewModel() {
                 ) {
                     tlog("DIAGNOSE: vermagic / module format mismatch - this loader will not run on this kernel", "WARN")
                     tlog("ACTION: phone did not restart (nothing was forced).", "INFO")
+                } else if (errText.contains("No such file or directory", true)) {
+                    tlog("DIAGNOSE: staged file not openable - try: chmod 644 + copy the .ko to /data/local/tmp manually", "WARN")
                 }
                 tlog("SUPPORT: this kernel ($kernel) needs a custom loader - tap the WhatsApp button below", "FIX")
                 return false
@@ -554,8 +514,11 @@ class DriverViewModel : ViewModel() {
             tlog("SAFETY: kernel stable - no phone restart risk", "OK")
             withContext(Dispatchers.Main) { verifyModule() }
             return true
+            } finally {
+                Shell.cmd("rm -f ${staged.absolutePath} 2>/dev/null").exec()
+            }
         } finally {
-            if (downloaded != tmp && downloaded.exists()) downloaded.delete()
+            if (downloaded.exists()) downloaded.delete()
         }
     }
 
@@ -623,19 +586,6 @@ class DriverViewModel : ViewModel() {
         }
     }
 
-    fun clearLogs() {
-        logs.clear()
-    }
-
-    fun getLogsText(): String {
-        return logs.joinToString("\n\n") { entry ->
-            "[${entry.timestamp}] $ ${entry.command}\n" +
-                    "Exit Code: ${entry.exitCode}\n" +
-                    (if (entry.stdout.isNotEmpty()) "STDOUT:\n${entry.stdout.joinToString("\n")}\n" else "") +
-                    (if (entry.stderr.isNotEmpty()) "STDERR:\n${entry.stderr.joinToString("\n")}" else "")
-        }.trim()
-    }
-
     fun verifyModule() {
         viewModelScope.launch {
             val kernelRelease = try {
@@ -684,127 +634,6 @@ class DriverViewModel : ViewModel() {
         pickedFileName.value = getFileName(context, uri)
         addLog("File picked: ${pickedFileName.value}", emptyList(), emptyList(), 0)
     }
-
-    fun loadModule(context: Context, forceLoad: Boolean = false) {
-        val uri = pickedFileUri.value ?: return
-        val fileName = pickedFileName.value ?: "module.ko"
-        
-        viewModelScope.launch {
-            val tempPath = "/data/local/tmp/$fileName"
-            
-            withContext(Dispatchers.IO) {
-                try {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        val cacheFile = File(context.cacheDir, fileName)
-                        cacheFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                        
-                        // 1. Copy to tmp FIRST
-                        Shell.cmd(
-                            "cp ${cacheFile.absolutePath} $tempPath",
-                            "chmod 644 $tempPath",
-                        ).exec()
-
-                        // 2. Check kernel version + .ko vermagic BEFORE insmod
-                        // (works for ANY kernel release - we compare the real numbers)
-                        val checkRes = Shell.cmd(
-                            "uname -r",
-                            "modinfo $tempPath 2>&1 || strings $tempPath | grep -a -i -m 5 vermagic 2>&1",
-                        ).exec()
-                        val checkOut = checkRes.out.joinToString("\n")
-                        withContext(Dispatchers.Main) {
-                            addLog("check kernel + vermagic", checkRes.out, checkRes.err, checkRes.code)
-                        }
-                        val kernelVer = try {
-                            Shell.cmd("uname -r").exec().out.firstOrNull()?.trim() ?: ""
-                        } catch (e: Exception) { "" }
-
-                        // Any device / any kernel: compare running release with .ko vermagic
-                        val kernelShort = RootChecker.kernelShortVersion(kernelVer)
-                        val vermagicShort = RootChecker.kernelShortVersion(checkOut)
-                        val isMismatch = kernelShort.isNotEmpty() &&
-                                vermagicShort.isNotEmpty() &&
-                                kernelShort != vermagicShort
-
-                        // 3. Try normal insmod first
-                        var res = Shell.cmd("insmod $tempPath").exec()
-                        withContext(Dispatchers.Main) {
-                            addLog("insmod $tempPath", res.out, res.err, res.code)
-                        }
-
-                        // 3. If failed due to version magic + user allowed force -> try insmod -f
-                        val errText = (res.out + res.err).joinToString("\n")
-                        val isVersionError = errText.contains("Invalid module format", true) ||
-                                errText.contains("vermagic", true) ||
-                                errText.contains("version magic", true) ||
-                                errText.contains("Exec format error", true)
-
-                        if (!res.isSuccess && isVersionError) {
-                            withContext(Dispatchers.Main) {
-                                if (isMismatch) {
-                                    addLog(
-                                        "DIAGNOSE: vermagic mismatch!",
-                                        listOf(
-                                            "Device kernel: $kernelVer",
-                                            ".ko vermagic: $checkOut",
-                                            "=> driver built for $vermagicShort, device runs $kernelShort.",
-                                            "=> A .ko for another kernel release never loads cleanly.",
-                                            "=> Best fix: use AUTO LOAD (auto vermagic patch / native build),",
-                                            "   else rebuild this .ko against $kernelShort headers."
-                                        ),
-                                        emptyList(), -1
-                                    )
-                                } else {
-                                    addLog(
-                                        "DIAGNOSE: version error, trying force",
-                                        listOf(errText), emptyList(), res.code
-                                    )
-                                }
-                            }
-                            if (forceLoad || isMismatch) {
-                                // insmod -f = force vermagic check bypass (unstable, but only option without rebuild)
-                                val forceRes = Shell.cmd("insmod -f $tempPath").exec()
-                                withContext(Dispatchers.Main) {
-                                    addLog("insmod -f $tempPath (FORCE)", forceRes.out, forceRes.err, forceRes.code)
-                                }
-                                res = forceRes
-                            }
-                        }
-
-                        // 4. Auto-verify after load attempt
-                        if (res.isSuccess) {
-                            val vRes = Shell.cmd("lsmod | tail -n 10; ls /dev 2>/dev/null; dmesg | tail -n 20").exec()
-                            withContext(Dispatchers.Main) {
-                                addLog("verify after insmod", vRes.out, vRes.err, vRes.code)
-                            }
-                            withContext(Dispatchers.Main) { verifyModule() }
-                        } else {
-                            withContext(Dispatchers.Main) {
-                                tlog("LOAD FAILED: this .ko did not load on this kernel.", "ERR")
-                                tlog(
-                                    "SUPPORT: message us on WhatsApp - we will build a custom loader for your kernel: wa.me/${SupportContact.WHATSAPP_NUMBER}",
-                                    "FIX"
-                                )
-                            }
-                        }
-                        
-                        cacheFile.delete()
-                    } ?: run {
-                        withContext(Dispatchers.Main) {
-                            addLog("Error: Could not open input stream", emptyList(), emptyList(), -1)
-                        }
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        addLog("Error: ${e.message}", emptyList(), emptyList(), -1)
-                    }
-                }
-            }
-        }
-    }
-
-    fun loadModuleForce(context: Context) = loadModule(context, forceLoad = true)
 
     fun unloadModule() {
         viewModelScope.launch {

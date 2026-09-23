@@ -1,17 +1,19 @@
 package com.kernelloader.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,13 +29,12 @@ import com.kernelloader.R
 
 @Composable
 fun CreditsScreen(onBack: () -> Unit) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize()
-    ) { innerPadding ->
+    AppBackground {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -42,8 +43,13 @@ fun CreditsScreen(onBack: () -> Unit) {
                 painter = painterResource(id = R.drawable.app_logo),
                 contentDescription = "Kernel Loder logo",
                 modifier = Modifier
-                    .size(96.dp)
-                    .clip(CircleShape),
+                    .size(84.dp)
+                    .clip(CircleShape)
+                    .border(
+                        2.dp,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        CircleShape
+                    ),
                 contentScale = ContentScale.Crop
             )
 
