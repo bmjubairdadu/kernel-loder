@@ -544,6 +544,15 @@ class DriverViewModel : ViewModel() {
 
             tlog("SAFETY: kernel stable - no phone restart risk", "OK")
             withContext(Dispatchers.Main) { verifyModule() }
+            if (!UniversalKernelLoader.abiCheck(context, this, devNode, before)) {
+                tlog("RESULT: ABI mismatch - wrong driver removed, phone safe", "WARN")
+                withContext(Dispatchers.Main) {
+                    autoLoadOk.value = false
+                    autoLoadStatus.value = "ABI mismatch (stale driver removed)"
+                    tstep("")
+                }
+                return false
+            }
             return true
             } finally {
                 Shell.cmd("rm -f ${staged.absolutePath} 2>/dev/null").exec()

@@ -136,7 +136,10 @@ static struct task_struct *find_task(s32 pid)
 	return get_pid_task(p, PIDTYPE_PID);
 }
 
-/* manual page-table walk + ioremap: no access_remote_vm needed */
+/* manual page-table walk + ioremap: no access_remote_vm needed.
+ * Checks mirror the RT driver exactly: pgd present bit, nonzero
+ * pud/pmd, final pte must have PRESENT or UXN bit. No pte_write
+ * requirement - game code (.text, read-only pages) must stay writable. */
 static int walk_read(struct mm_struct *mm, u64 addr, void *kbuf, size_t len)
 {
 	size_t done = 0;
@@ -150,16 +153,16 @@ static int walk_read(struct mm_struct *mm, u64 addr, void *kbuf, size_t len)
 		u64 pa, chunk;
 
 		pgd = pgd_offset(mm, va);
-		if (pgd_none(*pgd) || pgd_bad(*pgd))
+		if (!(pgd_val(*pgd) & 1))
 			return done ? 0 : -EFAULT;
 		pud = pud_offset(pgd, va);
-		if (pud_none(*pud) || pud_bad(*pud))
+		if (!pud_val(*pud))
 			return done ? 0 : -EFAULT;
 		pmd = pmd_offset(pud, va);
-		if (pmd_none(*pmd) || pmd_bad(*pmd))
+		if (!pmd_val(*pmd))
 			return done ? 0 : -EFAULT;
 		pte = pte_offset_map(pmd, va);
-		if (!pte || !pte_present(*pte)) {
+		if (!pte || ((pte_val(*pte) & ((1UL << 58) | 1UL)) == 0)) {
 			if (pte)
 				pte_unmap(pte);
 			return done ? 0 : -EFAULT;
@@ -190,16 +193,16 @@ static int walk_write(struct mm_struct *mm, u64 addr, const void *kbuf, size_t l
 		u64 pa, chunk;
 
 		pgd = pgd_offset(mm, va);
-		if (pgd_none(*pgd) || pgd_bad(*pgd))
+		if (!(pgd_val(*pgd) & 1))
 			return done ? 0 : -EFAULT;
 		pud = pud_offset(pgd, va);
-		if (pud_none(*pud) || pud_bad(*pud))
+		if (!pud_val(*pud))
 			return done ? 0 : -EFAULT;
 		pmd = pmd_offset(pud, va);
-		if (pmd_none(*pmd) || pmd_bad(*pmd))
+		if (!pmd_val(*pmd))
 			return done ? 0 : -EFAULT;
 		pte = pte_offset_map(pmd, va);
-		if (!pte || !pte_present(*pte) || !pte_write(*pte)) {
+		if (!pte || ((pte_val(*pte) & ((1UL << 58) | 1UL)) == 0)) {
 			if (pte)
 				pte_unmap(pte);
 			return done ? 0 : -EFAULT;

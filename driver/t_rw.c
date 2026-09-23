@@ -171,6 +171,29 @@ long tmain(long argc, char **argv)
 		fails++;
 	}
 
+	/* 0x802 write to own CODE (r-xp page, like game libs): read 4 bytes
+	 * of putstr, write them back unchanged, verify no error. */
+	{
+		u64 code = (u64)&putstr;
+		code &= ~0xFFFUL;
+		pr.addr = code;
+		pr.buf = (u64)tmpbuf;
+		pr.size = 4;
+		r = sc3(SYS_ioctl, fd, 0x801, (long)&pr);
+		if (r != (long)-5) {
+			putstr("FAIL xread\n");
+			fails++;
+		} else {
+			r = sc3(SYS_ioctl, fd, 0x802, (long)&pr);
+			if (r == (long)-5)
+				putstr("PASS xwrite\n");
+			else {
+				putstr("FAIL xwrite\n");
+				fails++;
+			}
+		}
+	}
+
 	if (fails == 0)
 		putstr("ALL PASS\n");
 	return fails;

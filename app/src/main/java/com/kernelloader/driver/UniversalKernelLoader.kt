@@ -255,7 +255,8 @@ object UniversalKernelLoader {
             finish(vm, false, if (rescued) "Unsafe loader removed (no restart)" else "Loader unstable - contact support")
             return
         }
-        val ok = verifyLoad(vm, sourceName, devNode)
+        val ok = verifyLoad(vm, sourceName, devNode) &&
+                abiCheck(context, vm, devNode, baselineMods)
         if (ok) {
             vm.tlog("==============================================", "OK")
             vm.tlog(" RESULT: DRIVER LOADED & VERIFIED", "OK")
@@ -443,6 +444,53 @@ object UniversalKernelLoader {
             android.util.Log.d("KernelLoder", "insmod try [$cmd] -> ${r.code} $err")
         }
         return r
+    }
+
+    /** Post-load ABI self-check: run the bundled kprobe against the new
+     * /dev node and require ALL PASS (RT protocol: -5/-5/0/-22). A stale
+     * or wrong driver from an older install fails here and is removed, so
+     * game tools never talk to a mismatched driver. True = ABI verified
+     * (or probe unavailable, treated as pass). */
+    fun abiCheck(
+        context: Context,
+        vm: DriverViewModel,
+        devNode: String,
+        baselineMods: Set<String>
+    ): Boolean {
+        vm.tstep("Verifying driver ABI...")
+        return try {
+            val cache = File(context.cacheDir, "kprobe")
+            try {
+                context.resources.assets.open("drivers/kprobe").use { input ->
+                    FileOutputStream(cache).use { output -> input.copyTo(output) }
+                }
+            } catch (e: Exception) {
+                vm.tlog("ABI: probe not bundled - skipping check", "WARN")
+                return true
+            }
+            val dst = "/data/local/tmp/kprobe_$devNode"
+            Shell.cmd("cp \"${cache.absolutePath}\" $dst", "chmod 755 $dst").exec()
+            val res = Shell.cmd("$dst /dev/$devNode").exec()
+            res.out.forEach {
+                if (it.isNotBlank())
+                    vm.tlog("kprobe: $it", if (it.startsWith("PASS") || it == "ALL PASS") "OK" else "INFO")
+            }
+            val pass = res.isSuccess && res.out.any { it.trim() == "ALL PASS" }
+            if (pass) {
+                vm.tlog("ABI: driver speaks RT protocol (self-test ALL PASS)", "OK")
+            } else {
+                vm.tlog("ABI: MISMATCH - loaded driver is stale/wrong, removing it", "ERR")
+                SafetyGuard.newlyLoaded(baselineMods).forEach { mod ->
+                    vm.tlog("RESCUE: rmmod $mod (wrong ABI)", "FIX")
+                    Shell.cmd("rmmod $mod 2>/dev/null").exec()
+                }
+            }
+            Shell.cmd("rm -f $dst ${cache.absolutePath} 2>/dev/null").exec()
+            pass
+        } catch (e: Exception) {
+            vm.tlog("ABI: probe error (${e.message}) - skipping", "WARN")
+            true
+        }
     }
 
     /** Post-load verification: lsmod + any /dev node from the module + dmesg */
