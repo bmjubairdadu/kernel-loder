@@ -165,7 +165,7 @@ fun HomeScreen(
                 Text(
                     text = "OTA Kernel Module Loader · v${BuildConfig.VERSION_NAME}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = Color(0xFFB0BEC5)
                 )
             }
             IconButton(onClick = onPickFile) {
@@ -233,7 +233,7 @@ fun HomeScreen(
                         .padding(top = 8.dp)
                         .clickable { viewModel.installAppUpdate(context) },
                     colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF1B2A1F)
+                        containerColor = Color(0xFF12271A)
                     ),
                     border = androidx.compose.foundation.BorderStroke(
                         1.dp, Color(0xFF4CAF50).copy(alpha = glow)
@@ -254,7 +254,7 @@ fun HomeScreen(
                             Text(
                                 text = "UPDATE v${appUpdate.versionCode} · ${appUpdate.versionName}",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = Color(0xFF4CAF50),
+                                color = Color(0xFF69F0AE),
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
@@ -262,7 +262,7 @@ fun HomeScreen(
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = FontFamily.Monospace
                                 ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                color = Color(0xFFB0BEC5)
                             )
                         }
                         Text(
@@ -316,7 +316,7 @@ fun HomeScreen(
             busy -> Color(0xFFFFB74D)
             autoOk == true -> Color(0xFF4CAF50)
             autoOk == false -> Color(0xFFEF5350)
-            else -> MaterialTheme.colorScheme.primary
+            else -> Color(0xFF69F0AE)
         }
 
         Column(
@@ -348,9 +348,14 @@ fun HomeScreen(
                     onClick = { viewModel.autoLoadUniversal(context, preferOta = true) },
                     enabled = !busy && rootAvailable,
                     shape = CircleShape,
+                    border = androidx.compose.foundation.BorderStroke(
+                        2.dp, Color.White.copy(alpha = 0.35f)
+                    ),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        containerColor = Color(0xFF1E7A46),
+                        contentColor = Color.White,
+                        disabledContainerColor = Color(0xFF1E7A46).copy(alpha = 0.35f),
+                        disabledContentColor = Color.White.copy(alpha = 0.6f)
                     ),
                     modifier = Modifier.size(152.dp).scale(pulse)
                 ) {
@@ -358,7 +363,7 @@ fun HomeScreen(
                         if (busy) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(34.dp),
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = Color.White
                             )
                         } else {
                             Icon(
@@ -386,7 +391,7 @@ fun HomeScreen(
                     else -> "Tap to detect kernel + download loader"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = Color(0xFFE0E0E0),
                 textAlign = TextAlign.Center,
                 fontFamily = FontFamily.Monospace
             )
@@ -402,6 +407,7 @@ fun HomeScreen(
                 text = "CONSOLE",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
+                color = Color(0xFF69F0AE),
                 modifier = Modifier.weight(1f)
             )
             IconButton(onClick = { clipboard.setText(AnnotatedString(viewModel.getTerminalText())) }) {
@@ -427,13 +433,13 @@ fun HomeScreen(
                         Icons.Default.Terminal,
                         contentDescription = null,
                         modifier = Modifier.size(38.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                        tint = Color(0xFF90A4AE)
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = "Tap the circle to start",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        color = Color(0xFFB0BEC5)
                     )
                 }
             } else {
@@ -466,13 +472,14 @@ fun HomeScreen(
                 else -> "SUPPORTED KERNELS (offline)"
             },
             style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF69F0AE)
         )
         Text(
             text = "DB updated: ${manifest?.updated?.take(10) ?: "-"}  ·  " +
                     "github.com/bmjubairdadu/kernel-loder (drivers branch)",
             style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            color = Color(0xFF90A4AE),
             modifier = Modifier.padding(top = 2.dp)
         )
         Row(
@@ -525,7 +532,7 @@ fun HomeScreen(
                                     fontSize = 11.sp
                                 ),
                                 color = if (isThis) Color(0xFF4CAF50)
-                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                                        else Color(0xFFE0E0E0),
                                 modifier = Modifier.weight(1f)
                             )
                             if (e.buildDate.isNotBlank()) {
@@ -534,7 +541,7 @@ fun HomeScreen(
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontFamily = FontFamily.Monospace
                                     ),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                    color = Color(0xFF90A4AE)
                                 )
                                 Spacer(Modifier.width(6.dp))
                             }
@@ -563,7 +570,7 @@ fun HomeScreen(
                         }
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 1.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                            color = Color(0xFF37474F)
                         )
                     }
                 }
@@ -576,7 +583,7 @@ fun HomeScreen(
                             "Connect, then tap the refresh button.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(18.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = Color(0xFFFFD54F)
                 )
             }
         }
@@ -601,7 +608,12 @@ private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 16.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (loadFailed) Color(0xFF3E2723)
-                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                             else Color(0xFF131E2C)
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (loadFailed) Color(0xFFEF5350).copy(alpha = 0.5f)
+            else Color(0xFF4CAF50).copy(alpha = 0.35f)
         )
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
@@ -610,13 +622,13 @@ private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
                        else "No kernel match? Need a custom loader?",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = if (loadFailed) Color(0xFFFF8A65) else MaterialTheme.colorScheme.onSurface
+                color = if (loadFailed) Color(0xFFFF8A65) else Color(0xFF69F0AE)
             )
             Text(
                 text = "Your device model and kernel version go into the message automatically - " +
                         "we build the loader for your exact kernel.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                color = Color(0xFFB0BEC5),
                 modifier = Modifier.padding(top = 4.dp)
             )
 
@@ -640,7 +652,7 @@ private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
                 text = if (customText.isBlank()) "Auto message will be sent (${kernelRelease})"
                        else "Auto message + your text (${customText.trim().length}/300)",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                color = Color(0xFF90A4AE),
                 modifier = Modifier.padding(top = 3.dp)
             )
 
@@ -682,15 +694,21 @@ private fun StatusChip(text: String, ok: Boolean, modifier: Modifier = Modifier)
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
-        color = if (ok) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.errorContainer,
-        tonalElevation = 2.dp
+        color = if (ok) Color(0xFF134E2E)
+                else Color(0xFF5D1A14),
+        tonalElevation = 2.dp,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (ok) Color(0xFF4CAF50).copy(alpha = 0.7f)
+            else Color(0xFFEF5350).copy(alpha = 0.7f)
+        )
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
+            color = if (ok) Color(0xFFB9F5D0) else Color(0xFFFFB4AB),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
         )
     }

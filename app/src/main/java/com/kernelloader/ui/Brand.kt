@@ -30,7 +30,7 @@ val BrandAccent = Color(0xFF4CAF50)
  */
 @Composable
 fun AppBackground(
-    watermarkAlpha: Float = 0.06f,
+    watermarkAlpha: Float = 0.045f,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
