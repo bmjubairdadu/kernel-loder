@@ -93,15 +93,19 @@ fun ConsoleScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFFE0E0E0))
                 }
-                Text(text = "Kernel Loder Console", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    text = "Kernel Loder Console",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White
+                )
                 Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = { clipboardManager.setText(AnnotatedString(viewModel.getTerminalText())) }) {
-                    Icon(Icons.Default.Bolt, contentDescription = "Copy terminal")
+                    Icon(Icons.Default.Bolt, contentDescription = "Copy terminal", tint = Color(0xFF69F0AE))
                 }
                 IconButton(onClick = { viewModel.clearTerminal() }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Clear terminal")
+                    Icon(Icons.Default.Delete, contentDescription = "Clear terminal", tint = Color(0xFFE0E0E0))
                 }
             }
 
@@ -119,6 +123,7 @@ fun ConsoleScreen(
                 )
                 Text(
                     text = "KERNEL: $kernelVersion",
+                    color = Color(0xFFB0BEC5),
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
                 )
             }
@@ -176,7 +181,11 @@ fun ConsoleScreen(
             ) {
                 TextButton(
                     onClick = { viewModel.autoLoadUniversal(context) },
-                    enabled = !viewModel.isBusy.value && rootAvailable
+                    enabled = !viewModel.isBusy.value && rootAvailable,
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                        contentColor = Color(0xFF69F0AE),
+                        disabledContentColor = Color(0xFF69F0AE).copy(alpha = 0.4f)
+                    )
                 ) {
                     Icon(Icons.Default.Bolt, contentDescription = null)
                     Spacer(modifier = Modifier.width(4.dp))
@@ -184,13 +193,21 @@ fun ConsoleScreen(
                 }
                 TextButton(
                     onClick = { viewModel.verifyModule() },
-                    enabled = !viewModel.isBusy.value && rootAvailable
+                    enabled = !viewModel.isBusy.value && rootAvailable,
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                        contentColor = Color(0xFF8AB4F8),
+                        disabledContentColor = Color(0xFF8AB4F8).copy(alpha = 0.4f)
+                    )
                 ) {
                     Text("VERIFY")
                 }
                 TextButton(
                     onClick = { viewModel.unloadModule() },
-                    enabled = !viewModel.isBusy.value && rootAvailable
+                    enabled = !viewModel.isBusy.value && rootAvailable,
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                        contentColor = Color(0xFFFF8A65),
+                        disabledContentColor = Color(0xFFFF8A65).copy(alpha = 0.4f)
+                    )
                 ) {
                     Text("UNLOAD")
                 }
@@ -207,9 +224,12 @@ fun ConsoleScreen(
                     value = input,
                     onValueChange = { input = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("root command (e.g. dmesg | tail -n 30)") },
+                    placeholder = { Text("root command (e.g. dmesg | tail -n 30)", color = Color(0xFF78909C)) },
                     singleLine = true,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        color = Color.White
+                    )
                 )
                 IconButton(
                     onClick = {
@@ -217,7 +237,7 @@ fun ConsoleScreen(
                         input = ""
                     }
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Run")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Run", tint = Color(0xFF69F0AE))
                 }
             }
         }

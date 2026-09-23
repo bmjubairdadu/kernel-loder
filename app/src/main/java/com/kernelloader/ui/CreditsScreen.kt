@@ -67,12 +67,19 @@ fun CreditsScreen(onBack: () -> Unit) {
             Text(
                 text = stringResource(R.string.credits_universal),
                 style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                color = androidx.compose.ui.graphics.Color(0xFFE0E0E0)
             )
             
             Spacer(modifier = Modifier.height(48.dp))
             
-            Button(onClick = onBack) {
+            Button(
+                onClick = onBack,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFF1E7A46),
+                    contentColor = androidx.compose.ui.graphics.Color.White
+                )
+            ) {
                 Text(text = stringResource(R.string.close))
             }
         }

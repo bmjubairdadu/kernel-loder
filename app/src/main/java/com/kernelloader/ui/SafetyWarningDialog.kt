@@ -23,6 +23,9 @@ fun SafetyWarningDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = androidx.compose.ui.graphics.Color(0xFF111C26),
+        titleContentColor = androidx.compose.ui.graphics.Color.White,
+        textContentColor = androidx.compose.ui.graphics.Color(0xFFB0BEC5),
         icon = {
             Image(
                 painter = painterResource(id = R.drawable.app_logo),
@@ -38,12 +41,24 @@ fun SafetyWarningDialog(
             Text(text = stringResource(R.string.safety_warning_message))
         },
         confirmButton = {
-            Button(onClick = onConfirm) {
+            Button(
+                onClick = onConfirm,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFF1E7A46),
+                    contentColor = androidx.compose.ui.graphics.Color.White
+                )
+            ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
-            Button(onClick = onDismiss) {
+            Button(
+                onClick = onDismiss,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFF37474F),
+                    contentColor = androidx.compose.ui.graphics.Color.White
+                )
+            ) {
                 Text(stringResource(R.string.exit))
             }
         }

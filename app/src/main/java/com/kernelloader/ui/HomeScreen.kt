@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -52,15 +54,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -169,13 +168,13 @@ fun HomeScreen(
                 )
             }
             IconButton(onClick = onPickFile) {
-                Icon(Icons.Default.FolderOpen, contentDescription = "Pick .ko file")
+                Icon(Icons.Default.FolderOpen, contentDescription = "Pick .ko file", tint = Color(0xFFE0E0E0))
             }
             IconButton(onClick = onNavigateToConsole) {
-                Icon(Icons.Default.Terminal, contentDescription = "Full console")
+                Icon(Icons.Default.Terminal, contentDescription = "Full console", tint = Color(0xFFE0E0E0))
             }
             IconButton(onClick = onNavigateToCredits) {
-                Icon(Icons.Default.Info, contentDescription = "Credits")
+                Icon(Icons.Default.Info, contentDescription = "Credits", tint = Color(0xFFE0E0E0))
             }
         }
 
@@ -210,7 +209,7 @@ fun HomeScreen(
                 modifier = Modifier.weight(2f)
             )
             IconButton(onClick = { viewModel.refreshManifest() }) {
-                Icon(Icons.Default.Refresh, contentDescription = "Refresh driver database")
+                Icon(Icons.Default.Refresh, contentDescription = "Refresh driver database", tint = Color(0xFF69F0AE))
             }
         }
 
@@ -411,10 +410,10 @@ fun HomeScreen(
                 modifier = Modifier.weight(1f)
             )
             IconButton(onClick = { clipboard.setText(AnnotatedString(viewModel.getTerminalText())) }) {
-                Icon(Icons.Default.ContentCopy, contentDescription = "Copy console")
+                Icon(Icons.Default.ContentCopy, contentDescription = "Copy console", tint = Color(0xFFE0E0E0))
             }
             IconButton(onClick = { viewModel.clearTerminal() }) {
-                Icon(Icons.Default.Delete, contentDescription = "Clear console")
+                Icon(Icons.Default.Delete, contentDescription = "Clear console", tint = Color(0xFFE0E0E0))
             }
         }
         Card(
@@ -588,22 +587,32 @@ fun HomeScreen(
             }
         }
 
-        // ---------------- support: custom loader via WhatsApp ----------------
-        SupportCard(kernelRelease = kernelRelease, loadFailed = autoOk == false)
+        // ---------------- support: custom loader via WhatsApp / GitHub ----------------
+        SupportCard(
+            kernelRelease = kernelRelease,
+            loadFailed = autoOk == false,
+            appVersion = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+            resultText = autoStatus.ifBlank { "load failed / no exact loader" },
+            getLog = { viewModel.getTerminalText() }
+        )
     }
     }
 }
 
 /**
- * Contact card: when no kernel matches or a load fails, the user can message
- * us on WhatsApp - device model + kernel version are pre-filled in the
- * message, so building a custom loader is easy.
+ * Contact card: WhatsApp (logo-only circle button, full log attached
+ * automatically) + GitHub failure report (one tap opens a pre-filled
+ * issue - the PC auto-triage watches these). No custom textbox.
  */
 @Composable
-private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
+private fun SupportCard(
+    kernelRelease: String,
+    loadFailed: Boolean,
+    appVersion: String,
+    resultText: String,
+    getLog: () -> String
+) {
     val context = LocalContext.current
-    // The user's own extra note - appended to the auto message.
-    var customText by remember { mutableStateOf("") }
     Card(
         modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 16.dp),
         colors = CardDefaults.cardColors(
@@ -616,74 +625,116 @@ private fun SupportCard(kernelRelease: String, loadFailed: Boolean) {
             else Color(0xFF4CAF50).copy(alpha = 0.35f)
         )
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Text(
                 text = if (loadFailed) "LOAD FAILED - need a custom loader?"
                        else "No kernel match? Need a custom loader?",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = if (loadFailed) Color(0xFFFF8A65) else Color(0xFF69F0AE)
+                color = if (loadFailed) Color(0xFFFF8A65) else Color(0xFF69F0AE),
+                textAlign = TextAlign.Center
             )
             Text(
-                text = "Your device model and kernel version go into the message automatically - " +
-                        "we build the loader for your exact kernel.",
+                text = "Tap a button - device, kernel and full log go automatically.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFFB0BEC5),
+                textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 4.dp)
             )
 
-            // ---------------- optional custom text ----------------
-            OutlinedTextField(
-                value = customText,
-                onValueChange = { if (it.length <= 300) customText = it },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                label = { Text("Extra text (optional)", style = MaterialTheme.typography.labelMedium) },
-                placeholder = {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // WhatsApp: logo-only circle
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    IconButton(
+                        onClick = {
+                            try {
+                                context.startActivity(
+                                    Intent(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse(
+                                            SupportContact.waLinkFull(
+                                                kernelRelease, appVersion,
+                                                resultText, getLog()
+                                            )
+                                        )
+                                    )
+                                )
+                            } catch (_: Exception) { /* no WhatsApp/browser */ }
+                        },
+                        modifier = Modifier
+                            .size(60.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF25D366))
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_whatsapp),
+                            contentDescription = "WhatsApp support",
+                            tint = Color.White,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        "e.g. phone keeps bootlooping, need a loader for this app",
-                        style = MaterialTheme.typography.bodySmall
+                        text = "WhatsApp",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFB0BEC5),
+                        fontWeight = FontWeight.Bold
                     )
-                },
-                minLines = 2,
-                maxLines = 4,
-                textStyle = MaterialTheme.typography.bodySmall
-            )
+                }
+                // GitHub failure report: logo-only circle
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    IconButton(
+                        onClick = {
+                            try {
+                                context.startActivity(
+                                    Intent(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse(
+                                            SupportContact.issueUrl(
+                                                kernelRelease, appVersion,
+                                                resultText, getLog()
+                                            )
+                                        )
+                                    )
+                                )
+                            } catch (_: Exception) { /* no browser */ }
+                        },
+                        modifier = Modifier
+                            .size(60.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1F2A37))
+                            .border(1.5.dp, Color(0xFF8AB4F8).copy(alpha = 0.6f), CircleShape)
+                    ) {
+                        Icon(
+                            Icons.Default.BugReport,
+                            contentDescription = "Send failure report to GitHub",
+                            tint = Color(0xFF8AB4F8),
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Report",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFB0BEC5),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
             Text(
-                text = if (customText.isBlank()) "Auto message will be sent (${kernelRelease})"
-                       else "Auto message + your text (${customText.trim().length}/300)",
+                text = "Report saves on GitHub - PC auto-checks and fixes",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF90A4AE),
-                modifier = Modifier.padding(top = 3.dp)
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 8.dp)
             )
-
-            Button(
-                onClick = {
-                    try {
-                        context.startActivity(
-                            Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse(SupportContact.waLink(kernelRelease, customText))
-                            )
-                        )
-                    } catch (_: Exception) { /* no WhatsApp/browser installed */ }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_whatsapp),
-                    contentDescription = "WhatsApp",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "WhatsApp: ${SupportContact.WHATSAPP_DISPLAY}",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
         }
     }
 }

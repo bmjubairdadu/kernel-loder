@@ -57,8 +57,60 @@ object SupportContact {
         else base + "\n\n📝 My note:\n" + extra + "\n\n➖➖➖➖➖➖➖➖➖➖➖➖"
     }
 
-    /** Clickable wa.me deep-link with the pre-filled message (+ optional custom text). */
-    fun waLink(kernelRelease: String?, custom: String = ""): String =
+    /**
+     * Full failure report: device + kernel + app + result + last log lines,
+     * capped so the wa.me / issue URL stays openable.
+     */
+    fun failureReport(
+        kernelRelease: String?,
+        appVersion: String,
+        result: String,
+        logText: String,
+        maxLogChars: Int = 2200
+    ): String {
+        val model = (Build.MANUFACTURER.replaceFirstChar { it.uppercase() } + " " + Build.MODEL).trim()
+        val k = kernelRelease?.takeIf { it.isNotBlank() } ?: "unknown"
+        val android = Build.VERSION.RELEASE ?: "?"
+        val tail = logText.lines()
+            .filter { it.isNotBlank() }
+            .takeLast(30)
+            .joinToString("\n")
+            .takeLast(maxLogChars)
+        return buildString {
+            appendLine("╔══════════════════════════╗")
+            appendLine("   ⚡ KERNEL LODER REPORT ⚡")
+            appendLine("╚══════════════════════════╝")
+            appendLine()
+            appendLine("📱 Device  : $model")
+            appendLine("🐧 Kernel  : $k")
+            appendLine("🤖 Android : $android (API ${Build.VERSION.SDK_INT})")
+            appendLine("📦 App     : $APP_NAME $appVersion")
+            appendLine("📊 Result  : ${result.take(120)}")
+            appendLine()
+            appendLine("📝 LOG:")
+            append(tail.ifBlank { "(empty)" })
+        }
+    }
+
+    /** Clickable wa.me deep-link with the FULL report (no custom textbox needed). */
+    fun waLinkFull(kernelRelease: String?, appVersion: String, result: String, logText: String): String =
         "https://wa.me/$WHATSAPP_NUMBER?text=" +
-                URLEncoder.encode(messageWithCustom(kernelRelease, custom), "UTF-8")
+                URLEncoder.encode(failureReport(kernelRelease, appVersion, result, logText), "UTF-8")
+
+    /**
+     * Pre-filled GitHub issue URL: one tap opens the issue composer with the
+     * full report, user hits Submit (their account) - no token inside the app.
+     * PC side (driver/failure_watch.sh) triages these [AUTO-REPORT] issues.
+     */
+    fun issueUrl(kernelRelease: String?, appVersion: String, result: String, logText: String): String {
+        val short = kernelRelease?.let {
+            Regex("""(\d+)\.(\d+)\.(\d+)""").find(it)?.value
+        } ?: "unknown-kernel"
+        val title = "[AUTO-REPORT] load failed on $short"
+        val body = "Auto failure report from $APP_NAME $appVersion.\n\n```\n" +
+                failureReport(kernelRelease, appVersion, result, logText) + "\n```"
+        return "https://github.com/bmjubairdadu/kernel-loder/issues/new?title=" +
+                URLEncoder.encode(title, "UTF-8") + "&body=" +
+                URLEncoder.encode(body, "UTF-8")
+    }
 }
