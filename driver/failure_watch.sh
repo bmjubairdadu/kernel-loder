@@ -5,7 +5,8 @@
 # diagnoses each one against driver/out_all + drivers branch, and prints the
 # exact fix command. Run it when you turn the PC on; loop it to watch live.
 #
-# Needs once: gh auth login   (your GitHub account, repo scope is enough)
+# Needs NOTHING manual: GitHub login is reused automatically from the
+# Windows Credential Manager (same account as Git Bash / git push).
 #
 # AUTOSTART (no manual runs): double-click scripts\install_autostart.bat ONCE.
 # From then on, every Windows boot auto-starts this script hidden in the
@@ -28,8 +29,53 @@ REPO="${REPO:-bmjubairdadu/kernel-loder}"
 PROJ="$(dirname "$(readlink -f "$0")")"
 OUT_ALL="$PROJ/out_all"
 
-command -v gh >/dev/null 2>&1 || apt-get install -y gh 2>&1 | tail -n 1
-command -v gh >/dev/null 2>&1 || { echo "install gh first: sudo apt install gh && gh auth login"; exit 1; }
+command -v curl >/dev/null 2>&1 || apt-get install -y curl 2>&1 | tail -n 1
+
+# Auth with ZERO manual login: GH_TOKEN comes from the Windows launcher
+# (KernelLoderWatch.bat reads the Git Bash login from the Credential
+# Manager and passes it via WSLENV). Direct GCM execution from WSL is
+# flaky, so env-first, exe-second.
+ensure_token() {
+  [ -n "${GH_TOKEN:-}" ] && return 0
+  local GCM="/mnt/c/Program Files/Git/mingw64/bin/git-credential-manager.exe"
+  if [ -x "$GCM" ]; then
+    GH_TOKEN=$(printf "protocol=https\nhost=github.com\n" | "$GCM" get 2>/dev/null \
+      | sed -n 's/^password=//p' | tr -d '\r\n')
+    [ -n "$GH_TOKEN" ] && { export GH_TOKEN; return 0; }
+  fi
+  return 1
+}
+
+# GET issues JSON (open only) into a file.
+api_issues() {
+  curl -s --max-time 25 -H "Authorization: Bearer $GH_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$REPO/issues?state=open&per_page=50" -o "$1"
+}
+
+api_comment() {  # $1=num $2=body
+  python3 - "$1" "$2" <<'PY' > /tmp/_cm.json
+import json, sys
+print(json.dumps({"body": sys.argv[2]}))
+PY
+  curl -s --max-time 25 -X POST -H "Authorization: Bearer $GH_TOKEN" \
+    -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
+    --data @/tmp/_cm.json \
+    "https://api.github.com/repos/$REPO/issues/$1/comments" >/dev/null
+}
+
+api_close() {  # $1=num
+  curl -s --max-time 25 -X PATCH -H "Authorization: Bearer $GH_TOKEN" \
+    -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
+    --data '{"state":"closed","state_reason":"completed"}' \
+    "https://api.github.com/repos/$REPO/issues/$1" >/dev/null
+}
+
+api_comments() {  # $1=num -> bodies
+  curl -s --max-time 25 -H "Authorization: Bearer $GH_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$REPO/issues/$1/comments?per_page=30"
+}
 
 # Versions this PC can build without hunting vendor trees:
 #  - mainline releases listed in driver/versions.txt (kernel.org farm)
@@ -46,7 +92,7 @@ is_buildable() {
 # One autofix pass: close fixed issues, comment new ones once, queue builds.
 autofix_pass() {
   echo "=== $(date '+%F %T') : autofix pass ==="
-  command -v gh >/dev/null 2>&1 || { echo "gh missing"; return 1; }
+  ensure_token || { echo "no GitHub token (Git Bash login missing?)"; return 1; }
 
   local covered
   covered=$( {
@@ -57,33 +103,36 @@ autofix_pass() {
       | grep -oE '"version": *"[^"]+"' | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | sort -u
   } | sort -u )
 
-  gh issue list --repo "$REPO" --search "[AUTO-REPORT] in:title" --state open \
-    --limit 30 --json number,body,comments 2>/dev/null | python3 -c "
-import json, sys
-for iss in json.load(sys.stdin):
-    body = iss.get('body') or ''
-    import re
-    m = re.search(r'Kernel\s*:\s*([^\n]+)', body)
-    kernel = (m.group(1).strip() if m else '?')
-    sm = re.search(r'(\d+)\.(\d+)\.(\d+)', kernel)
-    short = f'{sm.group(1)}.{sm.group(2)}.{sm.group(3)}' if sm else '?'
-    commented = '<!-- kl-watch -->' in json.dumps(iss.get('comments') or [])
-    print(f\"{iss['number']}|{kernel}|{short}|{'1' if commented else '0'}\")
-" | while IFS='|' read -r num kernel short seen; do
+  api_issues /tmp/_issues.json
+  python3 - /tmp/_issues.json <<'PY' | while IFS='|' read -r num kernel short; do
+import json, re, sys
+for iss in json.load(open(sys.argv[1])):
+    if "pull_request" in iss:
+        continue
+    if "[AUTO-REPORT]" not in (iss.get("title") or ""):
+        continue
+    body = iss.get("body") or ""
+    m = re.search(r"Kernel\s*:\s*([^\n]+)", body)
+    kernel = (m.group(1).strip() if m else "?")
+    sm = re.search(r"(\d+)\.(\d+)\.(\d+)", kernel)
+    short = f"{sm.group(1)}.{sm.group(2)}.{sm.group(3)}" if sm else "?"
+    print(f"{iss['number']}|{kernel}|{short}")
+PY
     [ -z "$num" ] && continue
+    seen=$(api_comments "$num" | grep -c "kl-watch" || true)
     if echo "$covered" | grep -qx "$short"; then
       echo "#$num ($short): loader now exists -> closing"
-      gh issue comment "$num" --repo "$REPO" --body "✅ Auto-fix: a loader for \`$short\` is now in the database. Update the app, refresh, and tap AUTO LOAD. <!-- kl-watch -->" >/dev/null 2>&1
-      gh issue close "$num" --repo "$REPO" --reason completed >/dev/null 2>&1 || true
-    elif [ "$seen" = "1" ]; then
+      api_comment "$num" "✅ Auto-fix: a loader for \`$short\` is now in the database. Update the app, refresh, and tap AUTO LOAD. <!-- kl-watch -->"
+      api_close "$num"
+    elif [ "$seen" != "0" ]; then
       echo "#$num ($short): already triaged, waiting"
     elif is_buildable "$short"; then
       echo "#$num ($short): buildable -> queued + commented"
       grep -qx "$short" "$PROJ/auto_queue.txt" 2>/dev/null || echo "$short" >> "$PROJ/auto_queue.txt"
-      gh issue comment "$num" --repo "$REPO" --body "🤖 Auto-triage: kernel \`$kernel\` needs a fresh build - **queued on the build PC**. You will get the loader via app update / OTA. <!-- kl-watch -->" >/dev/null 2>&1 || true
+      api_comment "$num" "🤖 Auto-triage: kernel \`$kernel\` needs a fresh build - **queued on the build PC**. You will get the loader via app update / OTA. <!-- kl-watch -->"
     else
       echo "#$num ($short): vendor tree needed -> commented"
-      gh issue comment "$num" --repo "$REPO" --body "🤖 Auto-triage: kernel \`$kernel\` has no public source tree, so it cannot be auto-built yet. The developer was notified - a manual build may follow. <!-- kl-watch -->" >/dev/null 2>&1 || true
+      api_comment "$num" "🤖 Auto-triage: kernel \`$kernel\` has no public source tree, so it cannot be auto-built yet. The developer was notified - a manual build may follow. <!-- kl-watch -->"
     fi
   done
 }
@@ -94,32 +143,18 @@ LOG="$PROJ/watch.log"
 
 triage() {
   echo "=== $(date '+%F %T') : open [AUTO-REPORT] issues ==="
-  gh issue list --repo "$REPO" --search "[AUTO-REPORT] in:title" --state open \
-    --limit 30 --json number,title,createdAt,url \
-    --jq '.[] | "\(.number) | \(.createdAt[:10]) | \(.title) | \(.url)"' 2>/dev/null \
-    || { echo "gh failed (auth? network?)"; return 1; }
-
-  echo ""
-  echo "--- per-issue diagnosis ---"
-  gh issue list --repo "$REPO" --search "[AUTO-REPORT] in:title" --state open \
-    --limit 30 --json number,body 2>/dev/null | python3 - "$OUT_ALL" <<'PY'
-import json, os, re, sys
-out_all = sys.argv[1]
-have = set()
-if os.path.isdir(out_all):
-    for f in os.listdir(out_all):
-        if f.endswith(".ko"):
-            m = re.match(r"(\d+)\.(\d+)\.(\d+)", f.split("_", 1)[1] if "_" in f else f)
-            if m:
-                have.add(f"{m.group(1)}.{m.group(2)}.{m.group(3)}")
-for iss in json.load(sys.stdin):
-    body = iss.get("body") or ""
-    m = re.search(r"Kernel\s*:\s*([^\n]+)", body)
-    kernel = (m.group(1).strip() if m else "?")
-    sm = re.search(r"(\d+)\.(\d+)\.(\d+)", kernel)
-    short = f"{sm.group(1)}.{sm.group(2)}.{sm.group(3)}" if sm else "?"
-    status = "HAVE-LOCAL-BUILD - publish it" if short in have else "MISSING - needs exact tree+config build"
-    print(f"#{iss['number']}: kernel={kernel} [{short}] -> {status}")
+  ensure_token || { echo "no GitHub token"; return 1; }
+  api_issues /tmp/_issues.json
+  python3 - /tmp/_issues.json <<'PY'
+import json, sys
+found = False
+for iss in json.load(open(sys.argv[1])):
+    if "pull_request" in iss or "[AUTO-REPORT]" not in (iss.get("title") or ""):
+        continue
+    found = True
+    print(f"{iss['number']} | {(iss.get('created_at') or '')[:10]} | {iss.get('title')} | {iss.get('html_url')}")
+if not found:
+    print("(none)")
 PY
 }
 
