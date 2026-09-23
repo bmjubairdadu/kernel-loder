@@ -2,7 +2,10 @@
  * kmem_337 - clean-room kernel memory driver for 4.9.337 (daisy / msm8953 family)
  * ---------------------------------------------------------------------------
  * ABI-compatible re-implementation of the interface observed in the legacy
- * 4.9.186 "wanbai/entryi" driver, written from scratch:
+ * 4.9.186 "wanbai/entryi" driver, written from scratch. The import set is
+ * deliberately kept within what the legacy driver uses (static buffers,
+ * manual page-table walk, no access_remote_vm, no kmalloc, no stack
+ * protector), so it resolves on the same vendor kernels.
  *
  *   - char device, default node /dev/entryi (overridable: insmod ... devname=xxxx)
  *   - ioctl 0x801 : read_process_memory   (32-byte struct)
@@ -16,11 +19,9 @@
  *   struct proc_rw { s32 pid; u32 _pad; u64 addr; u64 buf; u64 size; }; // 32 B
  *   struct modbase { s32 pid; u32 _pad; u64 name_ptr; u64 base; };      // 24 B
  *
- * Build (example, DaisyForGaming tree):
- *   make -C <kernel_dir> M=$(PWD) ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- modules
- *
- * Loader usage (no binary patching, no reboot):
- *   insmod kmem_337.ko devname=<random>   # then check /dev/<random>
+ * Build (DaisyForGaming tree, proton-clang):
+ *   make -C <kernel_dir> M=$(PWD) ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- \
+ *        CROSS_COMPILE_ARM32=arm-linux-androideabi- CC=clang modules
  */
 
 #include <linux/init.h>
@@ -30,18 +31,11 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/uaccess.h>
-#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/pid.h>
-#include <linux/pid_namespace.h>
-#include <linux/file.h>
-#include <linux/path.h>
-#include <linux/dcache.h>
-#include <linux/random.h>
-#include <linux/io.h>
 #include <linux/kallsyms.h>
-#include <linux/mm_types.h>
+#include <linux/io.h>
 #include <asm/pgtable.h>
 
 #define DRV_DEFAULT_NAME	"entryi"
@@ -54,6 +48,7 @@
 #define CMD_HANDSHAKE		0x805
 
 #define HANDSHAKE_MAGIC		666
+#define CHUNK			1024
 
 static char *devname = DRV_DEFAULT_NAME;
 module_param(devname, charp, 0444);
@@ -75,57 +70,64 @@ struct modbase {
 	u64 base;
 };
 
-/* physical offset, resolved at runtime (works even when the symbol
- * layout differs between vendor trees) */
-static u64 phys_offset = 0;
+/* static transfer area (no kmalloc - mirrors the legacy driver) */
+static u8 xfer[CHUNK];
+static char modname[256];
+static char modpath[1024];
 
-static u64 resolve_phys_offset(void)
-{
-	/* memstart_addr holds the start of linear-mapped RAM on arm64 4.9 */
-	ulong addr;
-
-	addr = (ulong)kallsyms_lookup_name("memstart_addr");
-	if (addr)
-		return *(u64 *)addr;
-	/* fallback: assume zero offset (identity-mapped low RAM) */
-	return 0;
-}
+extern s64 memstart_addr;
 
 /* translate a kernel linear address to a physical address */
 static u64 translate_linear_address(u64 va)
 {
 	if (va >= PAGE_OFFSET)
-		return va - PAGE_OFFSET + phys_offset;
+		return va - PAGE_OFFSET + memstart_addr;
 	return va;
+}
+
+static void io_read(void *dst, const volatile void *src, size_t n)
+{
+	u8 *d = dst;
+	const volatile u8 *s = src;
+
+	while (n--)
+		*d++ = *s++;
+}
+
+static void io_write(volatile void *dst, const void *src, size_t n)
+{
+	volatile u8 *d = dst;
+	const u8 *s = src;
+
+	while (n--)
+		*d++ = *s++;
 }
 
 static int read_physical_address(u64 pa, void *kbuf, size_t len)
 {
 	void __iomem *m;
-	u64 pfn = pa >> PAGE_SHIFT;
 
-	if (!pfn_valid(pfn))
+	if (!pfn_valid(pa >> PAGE_SHIFT))
 		return -EFAULT;
 	m = ioremap_cache(pa, len);
 	if (!m)
 		return -EFAULT;
-	memcpy_fromio(kbuf, m, len);
-	iounmap(m);
+	io_read(kbuf, (const volatile void __force *)m, len);
+	__iounmap(m);
 	return 0;
 }
 
 static int write_physical_address(u64 pa, const void *kbuf, size_t len)
 {
 	void __iomem *m;
-	u64 pfn = pa >> PAGE_SHIFT;
 
-	if (!pfn_valid(pfn))
+	if (!pfn_valid(pa >> PAGE_SHIFT))
 		return -EFAULT;
 	m = ioremap_cache(pa, len);
 	if (!m)
 		return -EFAULT;
-	memcpy_toio(m, kbuf, len);
-	iounmap(m);
+	io_write((volatile void __force *)m, kbuf, len);
+	__iounmap(m);
 	return 0;
 }
 
@@ -138,8 +140,8 @@ static struct task_struct *find_task(s32 pid)
 	return get_pid_task(p, PIDTYPE_PID);
 }
 
-/* manual fallback: walk the target page tables and read via ioremap */
-static int proc_read_fallback(struct mm_struct *mm, u64 addr, void *kbuf, size_t len)
+/* manual page-table walk + ioremap: no access_remote_vm needed */
+static int walk_read(struct mm_struct *mm, u64 addr, void *kbuf, size_t len)
 {
 	size_t done = 0;
 
@@ -150,7 +152,6 @@ static int proc_read_fallback(struct mm_struct *mm, u64 addr, void *kbuf, size_t
 		pte_t *pte;
 		u64 va = addr + done;
 		u64 pa, chunk;
-		u8 *tmp;
 
 		pgd = pgd_offset(mm, va);
 		if (pgd_none(*pgd) || pgd_bad(*pgd))
@@ -167,19 +168,54 @@ static int proc_read_fallback(struct mm_struct *mm, u64 addr, void *kbuf, size_t
 				pte_unmap(pte);
 			return done ? 0 : -EFAULT;
 		}
-		pa = (pte_pfn(*pte) << PAGE_SHIFT) | (va & ~PAGE_MASK);
+		pa = ((u64)pte_pfn(*pte) << PAGE_SHIFT) | (va & ~PAGE_MASK);
 		pte_unmap(pte);
 
-		chunk = min_t(size_t, len - done, PAGE_SIZE - (va & ~PAGE_MASK));
-		tmp = kmalloc(chunk, GFP_KERNEL);
-		if (!tmp)
-			return done ? 0 : -ENOMEM;
-		if (read_physical_address(pa, tmp, chunk)) {
-			kfree(tmp);
+		chunk = len - done;
+		if (chunk > PAGE_SIZE - (va & ~PAGE_MASK))
+			chunk = PAGE_SIZE - (va & ~PAGE_MASK);
+		if (read_physical_address(pa, (u8 *)kbuf + done, chunk))
+			return done ? 0 : -EFAULT;
+		done += chunk;
+	}
+	return 0;
+}
+
+static int walk_write(struct mm_struct *mm, u64 addr, const void *kbuf, size_t len)
+{
+	size_t done = 0;
+
+	while (done < len) {
+		pgd_t *pgd;
+		pud_t *pud;
+		pmd_t *pmd;
+		pte_t *pte;
+		u64 va = addr + done;
+		u64 pa, chunk;
+
+		pgd = pgd_offset(mm, va);
+		if (pgd_none(*pgd) || pgd_bad(*pgd))
+			return done ? 0 : -EFAULT;
+		pud = pud_offset(pgd, va);
+		if (pud_none(*pud) || pud_bad(*pud))
+			return done ? 0 : -EFAULT;
+		pmd = pmd_offset(pud, va);
+		if (pmd_none(*pmd) || pmd_bad(*pmd))
+			return done ? 0 : -EFAULT;
+		pte = pte_offset_map(pmd, va);
+		if (!pte || !pte_present(*pte) || !pte_write(*pte)) {
+			if (pte)
+				pte_unmap(pte);
 			return done ? 0 : -EFAULT;
 		}
-		memcpy((u8 *)kbuf + done, tmp, chunk);
-		kfree(tmp);
+		pa = ((u64)pte_pfn(*pte) << PAGE_SHIFT) | (va & ~PAGE_MASK);
+		pte_unmap(pte);
+
+		chunk = len - done;
+		if (chunk > PAGE_SIZE - (va & ~PAGE_MASK))
+			chunk = PAGE_SIZE - (va & ~PAGE_MASK);
+		if (write_physical_address(pa, (const u8 *)kbuf + done, chunk))
+			return done ? 0 : -EFAULT;
 		done += chunk;
 	}
 	return 0;
@@ -189,40 +225,35 @@ static int read_process_memory(s32 pid, u64 addr, u64 ubuf, u64 size)
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
-	void *kbuf;
-	int ret;
+	u64 done = 0;
+	int ret = -ESRCH;
 
 	if (!size || size > (64 * 1024 * 1024))
 		return -EINVAL;
 	if (!access_ok(VERIFY_WRITE, (void __user *)(uintptr_t)ubuf, size))
 		return -EFAULT;
 
-	kbuf = kmalloc(size, GFP_KERNEL);
-	if (!kbuf)
-		return -ENOMEM;
-
 	task = find_task(pid);
-	if (!task) {
-		kfree(kbuf);
+	if (!task)
 		return -ESRCH;
-	}
 	mm = get_task_mm(task);
 	put_task_struct(task);
-	if (!mm) {
-		kfree(kbuf);
+	if (!mm)
 		return -ESRCH;
+
+	while (done < size) {
+		size_t n = size - done > CHUNK ? CHUNK : (size_t)(size - done);
+
+		ret = walk_read(mm, addr + done, xfer, n);
+		if (ret)
+			break;
+		if (copy_to_user((void __user *)(uintptr_t)(ubuf + done), xfer, n)) {
+			ret = -EFAULT;
+			break;
+		}
+		done += n;
 	}
-
-	ret = access_remote_vm(mm, addr, kbuf, size, 0);
-	if (ret <= 0)
-		ret = proc_read_fallback(mm, addr, kbuf, size);
-	else
-		ret = 0;
 	mmput(mm);
-
-	if (!ret && copy_to_user((void __user *)(uintptr_t)ubuf, kbuf, size))
-		ret = -EFAULT;
-	kfree(kbuf);
 	return ret;
 }
 
@@ -230,78 +261,83 @@ static int write_process_memory(s32 pid, u64 addr, u64 ubuf, u64 size)
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
-	void *kbuf;
-	int ret;
+	u64 done = 0;
+	int ret = -ESRCH;
 
 	if (!size || size > (64 * 1024 * 1024))
 		return -EINVAL;
 	if (!access_ok(VERIFY_READ, (void __user *)(uintptr_t)ubuf, size))
 		return -EFAULT;
 
-	kbuf = kmalloc(size, GFP_KERNEL);
-	if (!kbuf)
-		return -ENOMEM;
-	if (copy_from_user(kbuf, (void __user *)(uintptr_t)ubuf, size)) {
-		kfree(kbuf);
-		return -EFAULT;
-	}
-
 	task = find_task(pid);
-	if (!task) {
-		kfree(kbuf);
+	if (!task)
 		return -ESRCH;
-	}
 	mm = get_task_mm(task);
 	put_task_struct(task);
-	if (!mm) {
-		kfree(kbuf);
+	if (!mm)
 		return -ESRCH;
-	}
 
-	ret = access_remote_vm(mm, addr, kbuf, size, 1);
+	while (done < size) {
+		size_t n = size - done > CHUNK ? CHUNK : (size_t)(size - done);
+
+		if (copy_from_user(xfer, (void __user *)(uintptr_t)(ubuf + done), n)) {
+			ret = -EFAULT;
+			break;
+		}
+		ret = walk_write(mm, addr + done, xfer, n);
+		if (ret)
+			break;
+		done += n;
+	}
 	mmput(mm);
-	kfree(kbuf);
-	return ret <= 0 ? -EFAULT : 0;
+	return ret;
 }
 
+/* lockless vma walk (mirrors the legacy driver - caller retries on miss) */
 static u64 get_module_base(s32 pid, const char *name)
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
 	struct vm_area_struct *vma;
 	u64 base = 0;
-	char *kbuf, *base_name;
-
-	kbuf = (char *)__get_free_page(GFP_KERNEL);
-	if (!kbuf)
-		return 0;
 
 	task = find_task(pid);
 	if (!task)
-		goto out_page;
+		return 0;
 	mm = get_task_mm(task);
 	put_task_struct(task);
 	if (!mm)
-		goto out_page;
+		return 0;
 
-	down_read(&mm->mmap_sem);
 	for (vma = mm->mmap; vma; vma = vma->vm_next) {
+		char *b;
+		size_t i = 0, nl = 0;
+
 		if (!vma->vm_file)
 			continue;
-		memset(kbuf, 0, PAGE_SIZE);
-		if (IS_ERR(file_path(vma->vm_file, kbuf, PAGE_SIZE)))
+		for (i = 0; name[i]; i++)
+			;
+		nl = i;
+		memset(modpath, 0, sizeof(modpath));
+		if (IS_ERR(file_path(vma->vm_file, modpath, sizeof(modpath))))
 			continue;
-		base_name = strrchr(kbuf, '/');
-		base_name = base_name ? base_name + 1 : kbuf;
-		if (!strcmp(base_name, name)) {
+		for (i = 0; modpath[i]; i++)
+			;
+		if (i < nl + 1)
+			continue;
+		b = modpath + i - nl;
+		if (*(b - 1) != '/')
+			continue;
+		for (i = 0; i < nl; i++) {
+			if (b[i] != name[i])
+				break;
+		}
+		if (i == nl && b[nl] == '\0') {
 			base = vma->vm_start;
 			break;
 		}
 	}
-	up_read(&mm->mmap_sem);
 	mmput(mm);
-out_page:
-	free_page((ulong)kbuf);
 	return base;
 }
 
@@ -328,34 +364,34 @@ static long dispatch_ioctl(struct file *file, unsigned int cmd, ulong arg)
 	case CMD_PROC_READ: {
 		struct proc_rw k;
 		if (!access_ok(VERIFY_READ, (void __user *)arg, sizeof(k)))
-			goto efault;
+			return -1;
 		if (copy_from_user(&k, (void __user *)arg, sizeof(k)))
-			goto efault;
+			return -1;
 		return read_process_memory(k.pid, k.addr, k.buf, k.size) ? 0 : -1;
 	}
 	case CMD_PROC_WRITE: {
 		struct proc_rw k;
 		if (!access_ok(VERIFY_READ, (void __user *)arg, sizeof(k)))
-			goto efault;
+			return -1;
 		if (copy_from_user(&k, (void __user *)arg, sizeof(k)))
-			goto efault;
+			return -1;
 		return write_process_memory(k.pid, k.addr, k.buf, k.size) ? 0 : -1;
 	}
 	case CMD_MOD_BASE: {
 		struct modbase k;
-		char name[256];
 		if (!access_ok(VERIFY_READ, (void __user *)arg, sizeof(k)))
-			goto efault_m;
+			return -1;
 		if (copy_from_user(&k, (void __user *)arg, sizeof(k)))
-			goto efault_m;
+			return -1;
 		if (!access_ok(VERIFY_READ, (void __user *)(uintptr_t)k.name_ptr,
-			       sizeof(name)))
-			goto efault_m;
-		memset(name, 0, sizeof(name));
-		if (copy_from_user(name, (void __user *)(uintptr_t)k.name_ptr,
-				   sizeof(name) - 1))
-			goto efault_m;
-		k.base = get_module_base(k.pid, name);
+			       sizeof(modname)))
+			return -1;
+		memset(modname, 0, sizeof(modname));
+		if (copy_from_user(modname,
+				   (void __user *)(uintptr_t)k.name_ptr,
+				   sizeof(modname) - 1))
+			return -1;
+		k.base = get_module_base(k.pid, modname);
 		if (!access_ok(VERIFY_WRITE, (void __user *)arg, sizeof(k)))
 			return -1;
 		if (copy_to_user((void __user *)arg, &k, sizeof(k)))
@@ -367,24 +403,21 @@ static long dispatch_ioctl(struct file *file, unsigned int cmd, ulong arg)
 	case CMD_HANDSHAKE: {
 		u8 k[32];
 		u32 magic = HANDSHAKE_MAGIC;
+		size_t i;
+
 		if (!access_ok(VERIFY_READ, (void __user *)arg, sizeof(k)))
-			goto efault;
+			return -1;
 		if (copy_from_user(k, (void __user *)arg, sizeof(k)))
-			goto efault;
-		memcpy(k, &magic, sizeof(magic));
+			return -1;
+		for (i = 0; i < sizeof(magic); i++)
+			k[i] = ((u8 *)&magic)[i];
 		if (!access_ok(VERIFY_WRITE, (void __user *)arg, sizeof(k)))
-			goto efault;
+			return -1;
 		if (copy_to_user((void __user *)arg, k, sizeof(k)))
-			goto efault;
+			return -1;
 		return 2;
 	}
 	}
-	return -1;
-
-efault:
-	/* legacy behavior: clear caller stack area, report -1 */
-	return -1;
-efault_m:
 	return -1;
 }
 
@@ -407,8 +440,6 @@ static struct device *char_device;
 static int __init kmem_init(void)
 {
 	int ret;
-
-	phys_offset = resolve_phys_offset();
 
 	ret = alloc_chrdev_region(&dev_number, 0, 1, devname);
 	if (ret)
