@@ -211,6 +211,16 @@ fun ConsoleScreen(
                 ) {
                     Text("UNLOAD")
                 }
+                TextButton(
+                    onClick = { viewModel.memTest() },
+                    enabled = !viewModel.isBusy.value && rootAvailable,
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                        contentColor = Color(0xFF4DD0E1),
+                        disabledContentColor = Color(0xFF4DD0E1).copy(alpha = 0.4f)
+                    )
+                ) {
+                    Text("MEM TEST")
+                }
             }
 
             // ---- Command input ----

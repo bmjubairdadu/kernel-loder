@@ -15,8 +15,8 @@ android {
         applicationId = "com.kernelloader"
         minSdk = 28
         targetSdk = 34
-        versionCode = 20
-        versionName = "3.5-universal"
+        versionCode = 21
+        versionName = "3.6-universal"
 
         // In-app auto-update sources (GitHub Releases database)
         buildConfigField(

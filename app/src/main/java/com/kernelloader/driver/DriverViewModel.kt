@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kernelloader.BuildConfig
 import com.kernelloader.driver.OtaDriverStore
+import com.kernelloader.mem.MemDirect
 import com.kernelloader.root.RootChecker
 import com.kernelloader.update.AppUpdateChecker
 import com.topjohnwu.superuser.Shell
@@ -294,6 +295,24 @@ class DriverViewModel : ViewModel() {
 
     fun getTerminalText(): String {
         return terminalLines.joinToString("\n") { "[${it.time}] ${it.text}" }
+    }
+
+    /** Driverless memory engine self-test (root + /proc/pid/mem, no .ko). */
+    fun memTest() {
+        viewModelScope.launch {
+            tlog("# memtest (driverless, no driver needed)", "CMD")
+            withContext(Dispatchers.IO) {
+                try {
+                    Shell.cmd("setenforce 0 2>/dev/null").exec()
+                    val lines = MemDirect.selfTest()
+                    withContext(Dispatchers.Main) {
+                        lines.forEach { (text, type) -> tlog(text, type) }
+                    }
+                } catch (e: Exception) {
+                    tlog("MEM ERROR: ${e.message}", "ERR")
+                }
+            }
+        }
     }
 
     /** Run a user-typed command in the root shell and stream result into the terminal */
