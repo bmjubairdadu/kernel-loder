@@ -614,13 +614,13 @@ class DriverViewModel : ViewModel() {
             val matchedNodes = devList.filter { node ->
                 moduleNames.any { m -> node.contains(m, ignoreCase = true) }
             }
-            val candidateNodes = (moduleNames + matchedNodes + listOf("kloaderctl", "daisyctl"))
+            val candidateNodes = (moduleNames + matchedNodes + listOf("kloaderctl", "daisyctl", "entryi", "kmem_337"))
                 .filter { it.isNotBlank() }.distinct()
             val devCmd = candidateNodes.joinToString(" ") { "ls /dev/$it 2>/dev/null;" } + " true"
             val devRes = Shell.cmd(devCmd).exec()
 
             val dmesgRes = Shell.cmd(
-                "dmesg | grep -i -E 'kloader|module|vermagic|insmod|misc|driver' | tail -n 8"
+                "dmesg | grep -i -E 'kmem|kloader|entryi|module|vermagic|insmod|misc|driver' | tail -n 8"
             ).exec()
 
             val timestamp = dateFormat.format(Date())

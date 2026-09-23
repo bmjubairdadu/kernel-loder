@@ -286,10 +286,32 @@ object UniversalKernelLoader {
         val koVermagic = try { readVermagic(cacheFile) } catch (e: Exception) { null }
         val koRelease = koVermagic?.substringBefore(' ') ?: ""
 
-        // --- FIX A: "File exists" -> module already loaded
+        // --- FIX A: "File exists" -> stale/loaded module with the same name.
+        // A previous load may be stuck (visible to insmod, invisible to
+        // lsmod and without a /dev node). Unload it, then retry once.
+        // If it is STILL stuck, only a normal user reboot clears kernel
+        // state - the app never reboots by itself.
         if (lastErr.contains("File exists", true) || lastErr.contains("already loaded", true)) {
-            vm.tlog("DIAGNOSE: module already loaded - treating as success", "OK")
-            return Shell.cmd("true").exec()
+            vm.tlog("DIAGNOSE: module name already present in kernel - cleaning stale state", "WARN")
+            val unload = Shell.cmd(
+                "rmmod kmem_337 2>/dev/null",
+                "BB=\$(command -v busybox); [ -z \"\$BB\" ] && BB=/data/adb/magisk/busybox; " +
+                        "[ -x \"\$BB\" ] && \$BB rmmod -f kmem_337 2>/dev/null; rmmod -f kmem_337 2>/dev/null",
+                "sleep 2",
+                "lsmod 2>/dev/null | grep -i kmem || echo KLMEM_NONE"
+            ).exec()
+            unload.out.forEach { if (it.isNotBlank()) vm.tlog("UNLOAD: $it", "INFO") }
+            res = insmodRetry(devNode)
+            vm.tlog("RETRY: insmod (after stale cleanup) -> exit ${res.code}", "CMD")
+            res.err.forEach { if (it.isNotBlank()) vm.tlog(it, "ERR") }
+            if (res.isSuccess) return res
+            lastErr = (res.out + res.err).joinToString("\n")
+            if (lastErr.contains("File exists", true)) {
+                vm.tlog("STALE: kernel still holds the old module entry - load impossible in this boot", "ERR")
+                vm.tlog("ACTION: reboot the phone ONCE normally (no auto-reboot), then tap LOAD again", "FIX")
+                return res
+            }
+            attempts++
         }
 
         // --- FIX B: Permission denied -> SELinux / chmod
@@ -433,6 +455,9 @@ object UniversalKernelLoader {
         val loadedLine = lsmod.out.drop(1).firstOrNull { line ->
             val n = line.trim().split(Regex("\\s+")).firstOrNull() ?: ""
             sourceTokens.any { n.contains(it, true) }
+        } ?: lsmod.out.firstOrNull { line ->
+            // Our kmem driver registers exactly as kmem_337 whatever the file is called.
+            (line.trim().split(Regex("\\s+")).firstOrNull() ?: "").equals("kmem_337", true)
         }
         val moduleLoaded = loadedLine != null
         val loadedName = loadedLine?.trim()?.split(Regex("\\s+"))?.firstOrNull() ?: ""
@@ -447,10 +472,10 @@ object UniversalKernelLoader {
             (loadedName.isNotEmpty() && node.contains(loadedName, true)) ||
                     (expectedNode.isNotEmpty() && node.contains(expectedNode, true)) ||
                     node.contains("kloader", true) || node.contains("daisy", true) ||
-                    node.contains("entryi", true)
+                    node.contains("entryi", true) || node.contains("kmem", true)
         }
         val devExists = devMatches.isNotEmpty()
-        val dmesg = Shell.cmd("dmesg | tail -n 15").exec()
+        val dmesg = Shell.cmd("dmesg | grep -i -E 'kmem|kloader|entryi|vermagic|insmod' | tail -n 15").exec()
 
         vm.tlog(
             "VERIFY: lsmod -> ${if (moduleLoaded) "LOADED (${loadedLine!!.trim().split(Regex("\\s+")).first()})" else "module not visible in lsmod"}",
