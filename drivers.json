@@ -1,7 +1,14 @@
 {
-  "updated": "2026-09-24T05:19:22Z",
+  "updated": "2026-09-24T05:19:26Z",
   "baseUrl": "https://raw.githubusercontent.com/bmjubairdadu/kernel-loder/drivers",
   "drivers": [
+    {
+      "version": "4.19.325",
+      "file": "uni_4.19.325.ko",
+      "sha256": "247621afd661189273d099aa437da79dd635e15d17aac87f4f3a8e63069e896b",
+      "size": 164568,
+      "buildDate": "2026-09-24T05:19:25Z"
+    },
     {
       "version": "4.19.320",
       "file": "uni_4.19.320.ko",
