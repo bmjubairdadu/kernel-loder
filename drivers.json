@@ -1,7 +1,14 @@
 {
-  "updated": "2026-09-25T08:14:52Z",
+  "updated": "2026-09-25T08:14:55Z",
   "baseUrl": "https://raw.githubusercontent.com/bmjubairdadu/kernel-loder/drivers",
   "drivers": [
+    {
+      "version": "4.3.6",
+      "file": "uni_4.3.6.ko",
+      "sha256": "b1c1a3f29346c4629e8898d2bba1ffccda7de839d1c1fdd14901ca19f86a9997",
+      "size": 226640,
+      "buildDate": "2026-09-25T08:14:55Z"
+    },
     {
       "version": "4.2.8",
       "file": "uni_4.2.8.ko",
@@ -302,13 +309,6 @@
       "sha256": "ab3e5351bb69727b0610b2ce77c79dd45629d0d7746270b35c786f7aa925fd33",
       "size": 212776,
       "buildDate": "2026-09-24T05:15:54Z"
-    },
-    {
-      "version": "4.3.6",
-      "file": "uni_4.3.6.ko",
-      "sha256": "b1c1a3f29346c4629e8898d2bba1ffccda7de839d1c1fdd14901ca19f86a9997",
-      "size": 226640,
-      "buildDate": "2026-09-24T05:15:51Z"
     },
     {
       "version": "4.9.337-DaisyForGaming",
